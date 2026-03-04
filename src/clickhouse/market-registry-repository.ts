@@ -92,13 +92,7 @@ export class MarketRegistryRepository {
   private static fromRowToBounds(row: MarketRegistrySelectRow): MarketBounds {
     const marketStartTs = Date.parse(row.market_start_ts.replace(" ", "T").concat("Z"));
     const marketEndTs = Date.parse(row.market_end_ts.replace(" ", "T").concat("Z"));
-    const bounds: MarketBounds = {
-      slug: row.slug,
-      asset: row.asset,
-      window: row.window,
-      marketStartTs,
-      marketEndTs
-    };
+    const bounds: MarketBounds = { slug: row.slug, asset: row.asset, window: row.window, marketStartTs, marketEndTs };
 
     return bounds;
   }
@@ -114,7 +108,8 @@ export class MarketRegistryRepository {
       up_asset_id: model.upAssetId,
       down_asset_id: model.downAssetId,
       created_at: nowIsoText,
-      updated_at: nowIsoText
+      updated_at: nowIsoText,
+      is_test: model.isTest ? 1 : 0
     };
 
     return row;
@@ -163,13 +158,15 @@ export class MarketRegistryRepository {
         up_asset_id String,
         down_asset_id String,
         created_at DateTime64(3, 'UTC'),
-        updated_at DateTime64(3, 'UTC')
+        updated_at DateTime64(3, 'UTC'),
+        is_test UInt8 DEFAULT 0
       )
       ENGINE = ReplacingMergeTree(updated_at)
       ORDER BY (slug)
     `;
 
     await this.client.command({ query });
+    await this.client.command({ query: `ALTER TABLE ${MARKET_REGISTRY_TABLE} ADD COLUMN IF NOT EXISTS is_test UInt8 DEFAULT 0` });
   }
 
   public async upsertMarkets(markets: MarketRecord[]): Promise<void> {
@@ -190,7 +187,7 @@ export class MarketRegistryRepository {
   public async getMarketBoundsBySlug(slug: string): Promise<MarketBounds | null> {
     const escapedSlug = this.escapeLiteral(slug);
     const query = `
-      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, created_at, updated_at
+      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, created_at, updated_at, is_test
       FROM ${MARKET_REGISTRY_TABLE}
       WHERE slug = '${escapedSlug}'
       ORDER BY updated_at DESC
@@ -219,7 +216,7 @@ export class MarketRegistryRepository {
     const escapedWindow = this.escapeLiteral(window);
     const escapedAsset = this.escapeLiteral(asset);
     const query = `
-      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, created_at, updated_at
+      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, created_at, updated_at, is_test
       FROM ${MARKET_REGISTRY_TABLE}
       WHERE window = '${escapedWindow}' AND asset = '${escapedAsset}'
       ORDER BY market_start_ts DESC

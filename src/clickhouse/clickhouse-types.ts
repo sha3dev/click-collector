@@ -34,6 +34,7 @@ export type TickInsertRow = {
   price: number | null;
   orderbook: string | null;
   payload_json: string;
+  is_test: number;
 };
 
 export type MarketRegistryInsertRow = {
@@ -46,6 +47,7 @@ export type MarketRegistryInsertRow = {
   down_asset_id: string;
   created_at: string;
   updated_at: string;
+  is_test: number;
 };
 
 export type TickSelectRow = TickInsertRow;

@@ -58,6 +58,7 @@ Important columns:
 - `window` (`5m|15m`)
 - `market_start_ts`, `market_end_ts`
 - `up_asset_id`, `down_asset_id`
+- `is_test` (`0|1`, marks records inserted by tests)
 
 Engine:
 
@@ -82,12 +83,13 @@ Important columns:
 - `price`
 - `orderbook` (JSON string with full `asks` + `bids` in one tick)
 - `payload_json`
+- `is_test` (`0|1`, marks records inserted by tests)
 
 Engine:
 
 - `MergeTree`
 - `PARTITION BY toYYYYMM(event_ts)`
-- `ORDER BY (asset, event_ts, source_category, source_name, event_type, market_slug, event_id)`
+- `ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id)`
 
 ## Public API Reference
 
@@ -109,6 +111,32 @@ Engine:
 - `MarketWindow = "5m" | "15m"`
 - `EventType = "price" | "orderbook"`
 - `MarketEvent`
+  - includes `isTest: boolean` (`true` when row comes from test data)
+
+## Delete Test Data (ClickHouse)
+
+If you need to clean only test rows, run:
+
+```sql
+ALTER TABLE default.market_registry DELETE WHERE is_test = 1;
+ALTER TABLE default.ticks DELETE WHERE is_test = 1;
+```
+
+Check mutation status:
+
+```sql
+SELECT database, table, mutation_id, is_done, latest_failed_part, latest_fail_reason
+FROM system.mutations
+WHERE database = 'default' AND table IN ('market_registry', 'ticks')
+ORDER BY create_time DESC;
+```
+
+Optional optimization after mutation completion:
+
+```sql
+OPTIMIZE TABLE default.market_registry FINAL;
+OPTIMIZE TABLE default.ticks FINAL;
+```
 
 ## Integration Guide (External Projects)
 

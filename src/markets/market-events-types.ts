@@ -40,6 +40,7 @@ export type MarketEvent = {
   price: number | null;
   orderbook: string | null;
   payloadJson: string;
+  isTest: boolean;
 };
 
 export type MarketRecord = {
@@ -50,4 +51,5 @@ export type MarketRecord = {
   marketEndTs: number;
   upAssetId: string;
   downAssetId: string;
+  isTest: boolean;
 };

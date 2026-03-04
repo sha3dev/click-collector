@@ -43,7 +43,8 @@ test("getMarketEvents composes related events query using market bounds", async 
     tokenSide: null,
     price: 100,
     orderbook: null,
-    payloadJson: "{}"
+    payloadJson: "{}",
+    isTest: false
   };
 
   const service = MarketEventsQueryService.create({

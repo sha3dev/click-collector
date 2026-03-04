@@ -132,7 +132,8 @@ export class PolymarketTicksIngestionService {
         marketStartTs: market.start.getTime(),
         marketEndTs: market.end.getTime(),
         upAssetId: market.upTokenId,
-        downAssetId: market.downTokenId
+        downAssetId: market.downTokenId,
+        isTest: false
       };
     }
 
@@ -192,7 +193,8 @@ export class PolymarketTicksIngestionService {
         tokenSide: context.tokenSide,
         price,
         orderbook,
-        payloadJson
+        payloadJson,
+        isTest: false
       };
     }
 

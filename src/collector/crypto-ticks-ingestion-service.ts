@@ -127,7 +127,8 @@ export class CryptoTicksIngestionService {
           tokenSide: null,
           price,
           orderbook,
-          payloadJson
+          payloadJson,
+          isTest: false
         };
       }
     }

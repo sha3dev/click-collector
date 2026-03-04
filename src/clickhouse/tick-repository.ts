@@ -98,7 +98,8 @@ export class TickRepository {
       token_side: model.tokenSide,
       price: model.price,
       orderbook: model.orderbook,
-      payload_json: model.payloadJson
+      payload_json: model.payloadJson,
+      is_test: model.isTest ? 1 : 0
     };
 
     return row;
@@ -118,7 +119,8 @@ export class TickRepository {
       tokenSide: row.token_side,
       price: row.price,
       orderbook: row.orderbook,
-      payloadJson: row.payload_json
+      payloadJson: row.payload_json,
+      isTest: row.is_test === 1
     };
 
     return event;
@@ -171,7 +173,8 @@ export class TickRepository {
         token_side Nullable(String),
         price Nullable(Float64),
         orderbook Nullable(String),
-        payload_json String
+        payload_json String,
+        is_test UInt8 DEFAULT 0
       )
       ENGINE = MergeTree
       PARTITION BY toYYYYMM(event_ts)
@@ -179,6 +182,7 @@ export class TickRepository {
     `;
 
     await this.client.command({ query });
+    await this.client.command({ query: `ALTER TABLE ${TICKS_TABLE} ADD COLUMN IF NOT EXISTS is_test UInt8 DEFAULT 0` });
   }
 
   public async insertTicks(events: MarketEvent[]): Promise<void> {
@@ -202,7 +206,7 @@ export class TickRepository {
     const fromIsoText = TickRepository.toDateTime64Text(options.fromTs);
     const toIsoText = TickRepository.toDateTime64Text(options.toTs);
     const query = `
-      SELECT event_id, event_ts, ingested_at, source_category, source_name, event_type, asset, window, market_slug, token_side, price, orderbook, payload_json
+      SELECT event_id, event_ts, ingested_at, source_category, source_name, event_type, asset, window, market_slug, token_side, price, orderbook, payload_json, is_test
       FROM ${TICKS_TABLE}
       WHERE
         (source_category = 'polymarket' AND market_slug = '${escapedSlug}')

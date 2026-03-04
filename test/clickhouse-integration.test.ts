@@ -27,7 +27,7 @@ test("clickhouse integration inserts and consumes stored market events", async (
   await tickRepository.ensureSchema();
 
   const baseTimestamp = Date.now();
-  const marketSlug = `btc-updown-5m-it-${baseTimestamp}`;
+  const marketSlug = `btc-updown-5m-${baseTimestamp}`;
   const marketRecord: MarketRecord = {
     slug: marketSlug,
     asset: "btc",
@@ -35,7 +35,8 @@ test("clickhouse integration inserts and consumes stored market events", async (
     marketStartTs: baseTimestamp,
     marketEndTs: baseTimestamp + 300_000,
     upAssetId: `up-${randomUUID()}`,
-    downAssetId: `down-${randomUUID()}`
+    downAssetId: `down-${randomUUID()}`,
+    isTest: true
   };
 
   await marketRegistryRepository.upsertMarkets([marketRecord]);
@@ -53,7 +54,8 @@ test("clickhouse integration inserts and consumes stored market events", async (
       tokenSide: null,
       price: 90_000,
       orderbook: null,
-      payloadJson: JSON.stringify({ type: "price", provider: "binance" })
+      payloadJson: JSON.stringify({ type: "price", provider: "binance" }),
+      isTest: true
     },
     {
       eventId: `chainlink-${randomUUID()}`,
@@ -67,7 +69,8 @@ test("clickhouse integration inserts and consumes stored market events", async (
       tokenSide: null,
       price: 90_005,
       orderbook: null,
-      payloadJson: JSON.stringify({ type: "price", provider: "chainlink" })
+      payloadJson: JSON.stringify({ type: "price", provider: "chainlink" }),
+      isTest: true
     },
     {
       eventId: `polymarket-${randomUUID()}`,
@@ -81,7 +84,8 @@ test("clickhouse integration inserts and consumes stored market events", async (
       tokenSide: "up",
       price: null,
       orderbook: JSON.stringify({ asks: [{ price: 0.53, size: 11 }], bids: [{ price: 0.52, size: 13 }] }),
-      payloadJson: JSON.stringify({ type: "book", source: "polymarket" })
+      payloadJson: JSON.stringify({ type: "book", source: "polymarket" }),
+      isTest: true
     }
   ];
 
@@ -100,4 +104,9 @@ test("clickhouse integration inserts and consumes stored market events", async (
   for (const event of insertedEvents) {
     assert.equal(relatedEventIds.has(event.eventId), true);
   }
+
+  const everyEventMarkedAsTest = relatedEvents.every((event) => {
+    return event.isTest;
+  });
+  assert.equal(everyEventMarkedAsTest, true);
 });
