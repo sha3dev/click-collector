@@ -31,8 +31,6 @@ export type TickInsertRow = {
   window: MarketWindow | null;
   market_slug: string | null;
   token_side: TokenSide | null;
-  price: number | null;
-  orderbook: string | null;
   payload_json: string;
   is_test: number;
 };

@@ -70,7 +70,7 @@ export class ClickHouseClientFactory {
       database: CONFIG.CLICKHOUSE_DATABASE,
       username: CONFIG.CLICKHOUSE_USER,
       password: CONFIG.CLICKHOUSE_PASSWORD,
-      clickhouse_settings: { async_insert: CONFIG.CLICKHOUSE_ASYNC_INSERT, wait_for_async_insert: CONFIG.CLICKHOUSE_WAIT_FOR_ASYNC_INSERT }
+      clickhouse_settings: { async_insert: CONFIG.CLICKHOUSE_ASYNC_INSERT === 1, wait_for_async_insert: CONFIG.CLICKHOUSE_WAIT_FOR_ASYNC_INSERT === 1 }
     }) as unknown as ClickHouseClientContract;
 
     return client;

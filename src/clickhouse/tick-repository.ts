@@ -106,8 +106,6 @@ export class TickRepository {
       window: model.window,
       market_slug: model.marketSlug,
       token_side: model.tokenSide,
-      price: model.price,
-      orderbook: model.orderbook,
       payload_json: model.payloadJson,
       is_test: model.isTest ? 1 : 0
     };
@@ -117,6 +115,9 @@ export class TickRepository {
 
   private static fromRowToEvent(row: TickSelectRow): MarketEvent {
     const eventTs = Date.parse(row.event_ts.replace(" ", "T").concat("Z"));
+    const payload = TickRepository.parsePayload(row.payload_json);
+    const price = TickRepository.resolvePrice(row.event_type, payload);
+    const orderbook = TickRepository.resolveOrderBook(row.event_type, payload);
     const event: MarketEvent = {
       eventId: row.event_id,
       eventTs,
@@ -127,13 +128,53 @@ export class TickRepository {
       window: row.window,
       marketSlug: row.market_slug,
       tokenSide: row.token_side,
-      price: row.price,
-      orderbook: row.orderbook,
+      price,
+      orderbook,
       payloadJson: row.payload_json,
       isTest: row.is_test === 1
     };
 
     return event;
+  }
+
+  private static parsePayload(payloadJson: string): Record<string, unknown> {
+    let payload: Record<string, unknown> = {};
+
+    try {
+      const parsedPayload = JSON.parse(payloadJson);
+
+      if (typeof parsedPayload === "object" && parsedPayload !== null) {
+        payload = parsedPayload as Record<string, unknown>;
+      }
+    } catch {
+      payload = {};
+    }
+
+    return payload;
+  }
+
+  private static resolvePrice(eventType: string, payload: Record<string, unknown>): number | null {
+    let price: number | null = null;
+
+    if (eventType === "price") {
+      const rawPrice = payload.price;
+
+      if (typeof rawPrice === "number" && Number.isFinite(rawPrice)) {
+        price = rawPrice;
+      }
+    }
+
+    return price;
+  }
+
+  private static resolveOrderBook(eventType: string, payload: Record<string, unknown>): string | null {
+    let orderbook: string | null = null;
+
+    if (eventType === "orderbook" && Array.isArray(payload.asks) && Array.isArray(payload.bids)) {
+      orderbook = JSON.stringify({ asks: payload.asks, bids: payload.bids });
+    }
+
+    return orderbook;
   }
 
   private static toRows(result: ClickHouseQueryResult<TickSelectRow>): TickSelectRow[] {
@@ -183,8 +224,6 @@ export class TickRepository {
         window Nullable(String),
         market_slug Nullable(String),
         token_side Nullable(String),
-        price Nullable(Float64),
-        orderbook Nullable(String),
         payload_json String,
         is_test UInt8 DEFAULT 0
       )
@@ -196,6 +235,8 @@ ${ttlClause}
 
     await this.client.command({ query });
     await this.client.command({ query: `ALTER TABLE ${TICKS_TABLE} ADD COLUMN IF NOT EXISTS is_test UInt8 DEFAULT 0` });
+    await this.client.command({ query: `ALTER TABLE ${TICKS_TABLE} DROP COLUMN IF EXISTS price` });
+    await this.client.command({ query: `ALTER TABLE ${TICKS_TABLE} DROP COLUMN IF EXISTS orderbook` });
 
     if (ttlExpression) {
       await this.client.command({ query: `ALTER TABLE ${TICKS_TABLE} MODIFY TTL ${ttlExpression}` });
@@ -223,7 +264,7 @@ ${ttlClause}
     const fromIsoText = TickRepository.toDateTime64Text(options.fromTs);
     const toIsoText = TickRepository.toDateTime64Text(options.toTs);
     const query = `
-      SELECT event_id, event_ts, ingested_at, source_category, source_name, event_type, asset, window, market_slug, token_side, price, orderbook, payload_json, is_test
+      SELECT event_id, event_ts, ingested_at, source_category, source_name, event_type, asset, window, market_slug, token_side, payload_json, is_test
       FROM ${TICKS_TABLE}
       WHERE
         (source_category = 'polymarket' AND market_slug = '${escapedSlug}')

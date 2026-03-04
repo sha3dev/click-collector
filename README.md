@@ -86,8 +86,6 @@ Important columns:
 - `window`
 - `market_slug`
 - `token_side` (`up|down`)
-- `price`
-- `orderbook` (JSON string with full `asks` + `bids` in one tick)
 - `payload_json`
 - `is_test` (`0|1`, marks records inserted by tests)
 
@@ -189,8 +187,6 @@ CREATE TABLE default.ticks (
   window Nullable(String),
   market_slug Nullable(String),
   token_side Nullable(String),
-  price Nullable(Float64),
-  orderbook Nullable(String),
   payload_json String,
   is_test UInt8 DEFAULT 0
 )
