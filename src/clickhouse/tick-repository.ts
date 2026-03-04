@@ -84,6 +84,16 @@ export class TickRepository {
     return value;
   }
 
+  private buildTtlExpression(): string | null {
+    let expression: string | null = null;
+
+    if (CONFIG.TICKS_TTL_DAYS > 0) {
+      expression = `event_ts + INTERVAL ${CONFIG.TICKS_TTL_DAYS} DAY`;
+    }
+
+    return expression;
+  }
+
   private static toInsertRow(model: TickWriteModel): TickInsertRow {
     const row: TickInsertRow = {
       event_id: model.eventId,
@@ -159,6 +169,8 @@ export class TickRepository {
    */
 
   public async ensureSchema(): Promise<void> {
+    const ttlExpression = this.buildTtlExpression();
+    const ttlClause = ttlExpression ? `\n      TTL ${ttlExpression}` : "";
     const query = `
       CREATE TABLE IF NOT EXISTS ${TICKS_TABLE} (
         event_id String,
@@ -178,11 +190,16 @@ export class TickRepository {
       )
       ENGINE = MergeTree
       PARTITION BY (asset, toYYYYMM(event_ts))
+${ttlClause}
       ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id)
     `;
 
     await this.client.command({ query });
     await this.client.command({ query: `ALTER TABLE ${TICKS_TABLE} ADD COLUMN IF NOT EXISTS is_test UInt8 DEFAULT 0` });
+
+    if (ttlExpression) {
+      await this.client.command({ query: `ALTER TABLE ${TICKS_TABLE} MODIFY TTL ${ttlExpression}` });
+    }
   }
 
   public async insertTicks(events: MarketEvent[]): Promise<void> {

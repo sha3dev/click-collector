@@ -53,8 +53,22 @@ test("crypto ingestion maps price and orderbook events into ticks", async () => 
     provider: "kraken",
     symbol: "btc",
     ts: 1_700_000_000_100,
-    asks: [{ price: 42_010, size: 2 }],
-    bids: [{ price: 41_990, size: 1 }]
+    asks: [
+      { price: 42_010, size: 2 },
+      { price: 42_011, size: 2 },
+      { price: 42_012, size: 2 },
+      { price: 42_013, size: 2 },
+      { price: 42_014, size: 2 },
+      { price: 42_015, size: 2 }
+    ],
+    bids: [
+      { price: 41_990, size: 1 },
+      { price: 41_989, size: 1 },
+      { price: 41_988, size: 1 },
+      { price: 41_987, size: 1 },
+      { price: 41_986, size: 1 },
+      { price: 41_985, size: 1 }
+    ]
   });
   listener({ type: "trade", provider: "binance", symbol: "btc", ts: 1, price: 1, size: 1, buyerIsMaker: false });
 
@@ -76,5 +90,10 @@ test("crypto ingestion maps price and orderbook events into ticks", async () => 
   assert.equal(secondEvent.eventType, "orderbook");
   assert.equal(secondEvent.price, null);
   assert.equal(typeof secondEvent.orderbook, "string");
-  assert.deepEqual(JSON.parse(secondEvent.orderbook ?? "{}"), { asks: [{ price: 42_010, size: 2 }], bids: [{ price: 41_990, size: 1 }] });
+  const parsedOrderbook = JSON.parse(secondEvent.orderbook ?? "{}") as {
+    asks: Array<{ price: number; size: number }>;
+    bids: Array<{ price: number; size: number }>;
+  };
+  assert.equal(parsedOrderbook.asks.length, 5);
+  assert.equal(parsedOrderbook.bids.length, 5);
 });

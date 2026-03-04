@@ -83,8 +83,22 @@ test("polymarket ingestion persists market registry and maps stream events", asy
     index: 2,
     date: new Date("2026-01-01T00:01:20.000Z"),
     type: "book",
-    asks: [{ price: 0.38, size: 100 }],
-    bids: [{ price: 0.37, size: 120 }]
+    asks: [
+      { price: 0.38, size: 100 },
+      { price: 0.39, size: 101 },
+      { price: 0.4, size: 102 },
+      { price: 0.41, size: 103 },
+      { price: 0.42, size: 104 },
+      { price: 0.43, size: 105 }
+    ],
+    bids: [
+      { price: 0.37, size: 120 },
+      { price: 0.36, size: 121 },
+      { price: 0.35, size: 122 },
+      { price: 0.34, size: 123 },
+      { price: 0.33, size: 124 },
+      { price: 0.32, size: 125 }
+    ]
   });
 
   await service.stop();
@@ -109,5 +123,10 @@ test("polymarket ingestion persists market registry and maps stream events", asy
   assert.ok(secondTickEvent);
   assert.equal(secondTickEvent.eventType, "orderbook");
   assert.equal(secondTickEvent.tokenSide, "down");
-  assert.deepEqual(JSON.parse(secondTickEvent.orderbook ?? "{}"), { asks: [{ price: 0.38, size: 100 }], bids: [{ price: 0.37, size: 120 }] });
+  const parsedOrderbook = JSON.parse(secondTickEvent.orderbook ?? "{}") as {
+    asks: Array<{ price: number; size: number }>;
+    bids: Array<{ price: number; size: number }>;
+  };
+  assert.equal(parsedOrderbook.asks.length, 5);
+  assert.equal(parsedOrderbook.bids.length, 5);
 });

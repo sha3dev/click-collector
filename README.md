@@ -95,6 +95,7 @@ Engine:
 
 - `MergeTree`
 - `PARTITION BY (asset, toYYYYMM(event_ts))`
+- `TTL event_ts + INTERVAL 90 DAY` (default; configurable)
 - `ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id)`
 
 ## Public API Reference
@@ -195,6 +196,7 @@ CREATE TABLE default.ticks (
 )
 ENGINE = MergeTree
 PARTITION BY (asset, toYYYYMM(event_ts))
+TTL event_ts + INTERVAL 90 DAY
 ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id);
 ```
 
@@ -239,6 +241,12 @@ All config is centralized in the default export `CONFIG`.
 - `INGEST_BATCH_SIZE`: buffer size before insert flush
 - `INGEST_FLUSH_INTERVAL_MS`: periodic flush interval
 - `INGEST_COALESCE_WINDOW_MS`: max write frequency per coalesce key (`source + type + asset + market context`); `0` disables coalesce
+- `INGEST_COALESCE_CLEANUP_INTERVAL_MS`: periodic cleanup interval for coalesce in-memory keys
+- `INGEST_COALESCE_KEY_TTL_MS`: inactivity TTL for coalesce keys in memory
+- `ORDERBOOK_MAX_LEVELS`: max asks/bids levels persisted per orderbook tick (default `5`)
+- `TICKS_TTL_DAYS`: retention window in days for `ticks` table (`0` disables TTL modification)
+- `CLICKHOUSE_ASYNC_INSERT`: ClickHouse async insert mode (`1` enabled)
+- `CLICKHOUSE_WAIT_FOR_ASYNC_INSERT`: wait behavior for async insert (`0` fire-and-forget, `1` wait)
 - `POLYMARKET_DISCOVERY_INTERVAL_MS`: market discovery refresh interval
 - `SUPPORTED_ASSETS`: tracked symbols (`btc|eth|sol|xrp`)
 - `SUPPORTED_WINDOWS`: tracked windows (`5m|15m`)
@@ -256,6 +264,12 @@ CLICKHOUSE_MARKET_REGISTRY_TABLE=market_registry
 INGEST_BATCH_SIZE=200
 INGEST_FLUSH_INTERVAL_MS=1000
 INGEST_COALESCE_WINDOW_MS=250
+INGEST_COALESCE_CLEANUP_INTERVAL_MS=60000
+INGEST_COALESCE_KEY_TTL_MS=3600000
+ORDERBOOK_MAX_LEVELS=5
+TICKS_TTL_DAYS=90
+CLICKHOUSE_ASYNC_INSERT=1
+CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=0
 POLYMARKET_DISCOVERY_INTERVAL_MS=30000
 ```
 

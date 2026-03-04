@@ -98,7 +98,9 @@ export class CryptoTicksIngestionService {
   }
 
   private static serializeOrderBook(asks: { price: number; size: number }[], bids: { price: number; size: number }[]): string {
-    const payload = JSON.stringify({ asks, bids });
+    const limitedAsks = asks.slice(0, CONFIG.ORDERBOOK_MAX_LEVELS);
+    const limitedBids = bids.slice(0, CONFIG.ORDERBOOK_MAX_LEVELS);
+    const payload = JSON.stringify({ asks: limitedAsks, bids: limitedBids });
     return payload;
   }
 
