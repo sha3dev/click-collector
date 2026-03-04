@@ -22,7 +22,7 @@ import type { TickRepository } from "../clickhouse/tick-repository.ts";
  * @section types
  */
 
-type ClickHouseTickSinkOptions = { repository: TickRepository };
+type ClickHouseTickSinkOptions = { repository: TickRepository; coalesceWindowMs?: number };
 
 export class ClickHouseTickSink {
   /**
@@ -43,6 +43,8 @@ export class ClickHouseTickSink {
 
   private readonly repository: TickRepository;
   private readonly buffer: MarketEvent[];
+  private readonly lastAcceptedTsByCoalesceKey: Map<string, number>;
+  private readonly coalesceWindowMs: number;
 
   /**
    * @section public:properties
@@ -57,6 +59,8 @@ export class ClickHouseTickSink {
   public constructor(options: ClickHouseTickSinkOptions) {
     this.repository = options.repository;
     this.buffer = [];
+    this.lastAcceptedTsByCoalesceKey = new Map<string, number>();
+    this.coalesceWindowMs = options.coalesceWindowMs ?? CONFIG.INGEST_COALESCE_WINDOW_MS;
     this.flushTimer = null;
   }
 
@@ -82,6 +86,27 @@ export class ClickHouseTickSink {
   private shouldFlush(): boolean {
     const decision = this.buffer.length >= CONFIG.INGEST_BATCH_SIZE;
     return decision;
+  }
+
+  private static toCoalesceKey(event: MarketEvent): string {
+    const marketSlug = event.marketSlug ?? "";
+    const tokenSide = event.tokenSide ?? "";
+    const window = event.window ?? "";
+    const key = `${event.sourceCategory}|${event.sourceName}|${event.eventType}|${event.asset}|${window}|${marketSlug}|${tokenSide}`;
+    return key;
+  }
+
+  private shouldKeepEvent(event: MarketEvent): boolean {
+    const key = ClickHouseTickSink.toCoalesceKey(event);
+    const previousTs = this.lastAcceptedTsByCoalesceKey.get(key);
+    const eventAgeMs = previousTs === undefined ? Number.POSITIVE_INFINITY : event.eventTs - previousTs;
+    const shouldKeep = this.coalesceWindowMs <= 0 || eventAgeMs >= this.coalesceWindowMs;
+
+    if (shouldKeep) {
+      this.lastAcceptedTsByCoalesceKey.set(key, event.eventTs);
+    }
+
+    return shouldKeep;
   }
 
   private takeBatch(): MarketEvent[] {
@@ -117,7 +142,11 @@ export class ClickHouseTickSink {
 
   public async writeTicks(events: MarketEvent[]): Promise<void> {
     for (const event of events) {
-      this.buffer.push(event);
+      const shouldKeepEvent = this.shouldKeepEvent(event);
+
+      if (shouldKeepEvent) {
+        this.buffer.push(event);
+      }
     }
 
     if (this.shouldFlush()) {

@@ -178,6 +178,7 @@ All config is centralized in the default export `CONFIG`.
 - `CLICKHOUSE_MARKET_REGISTRY_TABLE`: market registry table name
 - `INGEST_BATCH_SIZE`: buffer size before insert flush
 - `INGEST_FLUSH_INTERVAL_MS`: periodic flush interval
+- `INGEST_COALESCE_WINDOW_MS`: max write frequency per coalesce key (`source + type + asset + market context`); `0` disables coalesce
 - `POLYMARKET_DISCOVERY_INTERVAL_MS`: market discovery refresh interval
 - `SUPPORTED_ASSETS`: tracked symbols (`btc|eth|sol|xrp`)
 - `SUPPORTED_WINDOWS`: tracked windows (`5m|15m`)
@@ -194,6 +195,7 @@ CLICKHOUSE_TICKS_TABLE=ticks
 CLICKHOUSE_MARKET_REGISTRY_TABLE=market_registry
 INGEST_BATCH_SIZE=200
 INGEST_FLUSH_INTERVAL_MS=1000
+INGEST_COALESCE_WINDOW_MS=250
 POLYMARKET_DISCOVERY_INTERVAL_MS=30000
 ```
 
