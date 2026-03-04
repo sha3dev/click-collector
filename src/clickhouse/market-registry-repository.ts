@@ -162,6 +162,7 @@ export class MarketRegistryRepository {
         is_test UInt8 DEFAULT 0
       )
       ENGINE = ReplacingMergeTree(updated_at)
+      PARTITION BY asset
       ORDER BY (slug)
     `;
 

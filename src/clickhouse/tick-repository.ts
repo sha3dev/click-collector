@@ -177,7 +177,7 @@ export class TickRepository {
         is_test UInt8 DEFAULT 0
       )
       ENGINE = MergeTree
-      PARTITION BY toYYYYMM(event_ts)
+      PARTITION BY (asset, toYYYYMM(event_ts))
       ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id)
     `;
 

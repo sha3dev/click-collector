@@ -47,6 +47,11 @@ Model training pipelines need deterministic historical arrays of heterogeneous e
 
 ## Data Model (ClickHouse)
 
+Query-shape assumption used in physical design:
+
+- reads are single-asset (`btc` or `eth` or `sol` or `xrp`)
+- reads are single-market per request (one `slug` at a time)
+
 ### `market_registry`
 
 Catalog of Polymarket markets.
@@ -63,6 +68,7 @@ Important columns:
 Engine:
 
 - `ReplacingMergeTree(updated_at)`
+- `PARTITION BY asset`
 - `ORDER BY (slug)`
 
 ### `ticks`
@@ -88,7 +94,7 @@ Important columns:
 Engine:
 
 - `MergeTree`
-- `PARTITION BY toYYYYMM(event_ts)`
+- `PARTITION BY (asset, toYYYYMM(event_ts))`
 - `ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id)`
 
 ## Public API Reference
@@ -136,6 +142,60 @@ Optional optimization after mutation completion:
 ```sql
 OPTIMIZE TABLE default.market_registry FINAL;
 OPTIMIZE TABLE default.ticks FINAL;
+```
+
+## Reset Database to Initial State
+
+Stop the collector before reset to avoid new inserts during cleanup.
+
+### Fast reset (keep table definitions)
+
+```sql
+TRUNCATE TABLE default.market_registry;
+TRUNCATE TABLE default.ticks;
+```
+
+### Full reset (drop and recreate tables with current schema)
+
+```sql
+DROP TABLE IF EXISTS default.market_registry;
+DROP TABLE IF EXISTS default.ticks;
+
+CREATE TABLE default.market_registry (
+  slug String,
+  asset LowCardinality(String),
+  window LowCardinality(String),
+  market_start_ts DateTime64(3, 'UTC'),
+  market_end_ts DateTime64(3, 'UTC'),
+  up_asset_id String,
+  down_asset_id String,
+  created_at DateTime64(3, 'UTC'),
+  updated_at DateTime64(3, 'UTC'),
+  is_test UInt8 DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(updated_at)
+PARTITION BY asset
+ORDER BY (slug);
+
+CREATE TABLE default.ticks (
+  event_id String,
+  event_ts DateTime64(3, 'UTC'),
+  ingested_at DateTime64(3, 'UTC'),
+  source_category LowCardinality(String),
+  source_name LowCardinality(String),
+  event_type LowCardinality(String),
+  asset LowCardinality(String),
+  window Nullable(String),
+  market_slug Nullable(String),
+  token_side Nullable(String),
+  price Nullable(Float64),
+  orderbook Nullable(String),
+  payload_json String,
+  is_test UInt8 DEFAULT 0
+)
+ENGINE = MergeTree
+PARTITION BY (asset, toYYYYMM(event_ts))
+ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id);
 ```
 
 ## Integration Guide (External Projects)
