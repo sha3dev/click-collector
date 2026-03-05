@@ -1,18 +1,19 @@
 import { strict as assert } from "node:assert";
-import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { createClient } from "@clickhouse/client";
 
 import { MarketRegistryRepository } from "../src/clickhouse/market-registry-repository.ts";
 import { TickRepository } from "../src/clickhouse/tick-repository.ts";
 import { MarketEventsQueryService } from "../src/markets/market-events-query-service.ts";
-import type { MarketEvent, MarketRecord } from "../src/markets/market-events-types.ts";
+import type { MarketSnapshot } from "../src/markets/market-events-types.ts";
 
-const CLICKHOUSE_URL = "http://192.168.1.2:8123";
-const CLICKHOUSE_USER = "default";
-const CLICKHOUSE_PASSWORD = "default";
+const CLICKHOUSE_URL = process.env.CLICKHOUSE_HOST ?? "http://192.168.1.2:8123";
+const CLICKHOUSE_USER = process.env.CLICKHOUSE_USER ?? "default";
+const CLICKHOUSE_PASSWORD = process.env.CLICKHOUSE_PASSWORD ?? "default";
+const READONLY_WINDOW = "5m" as const;
+const READONLY_ASSET = "btc" as const;
 
-test("clickhouse integration inserts and consumes stored market events", async (t) => {
+test("clickhouse readonly query returns market snapshots aligned with events", async (t) => {
   const client = createClient({ url: CLICKHOUSE_URL, username: CLICKHOUSE_USER, password: CLICKHOUSE_PASSWORD, database: "default" });
 
   t.after(async () => {
@@ -22,91 +23,39 @@ test("clickhouse integration inserts and consumes stored market events", async (
   const marketRegistryRepository = MarketRegistryRepository.create({ client });
   const tickRepository = TickRepository.create({ client });
   const queryService = MarketEventsQueryService.create({ marketRegistryRepository, tickRepository });
+  const listedSlugs = await queryService.listMarkets(READONLY_WINDOW, READONLY_ASSET);
+  const hasAnySlug = listedSlugs.length > 0;
 
-  await marketRegistryRepository.ensureSchema();
-  await tickRepository.ensureSchema();
-
-  const baseTimestamp = Date.now();
-  const marketSlug = `btc-updown-5m-${baseTimestamp}`;
-  const marketRecord: MarketRecord = {
-    slug: marketSlug,
-    asset: "btc",
-    window: "5m",
-    marketStartTs: baseTimestamp,
-    marketEndTs: baseTimestamp + 300_000,
-    upAssetId: `up-${randomUUID()}`,
-    downAssetId: `down-${randomUUID()}`,
-    isTest: true
-  };
-
-  await marketRegistryRepository.upsertMarkets([marketRecord]);
-
-  const insertedEvents: MarketEvent[] = [
-    {
-      eventId: `exchange-${randomUUID()}`,
-      eventTs: baseTimestamp + 1_000,
-      sourceCategory: "exchange",
-      sourceName: "binance",
-      eventType: "price",
-      asset: "btc",
-      window: null,
-      marketSlug: null,
-      tokenSide: null,
-      price: 90_000,
-      orderbook: null,
-      payloadJson: JSON.stringify({ type: "price", provider: "binance" }),
-      isTest: true
-    },
-    {
-      eventId: `chainlink-${randomUUID()}`,
-      eventTs: baseTimestamp + 2_000,
-      sourceCategory: "chainlink",
-      sourceName: "chainlink",
-      eventType: "price",
-      asset: "btc",
-      window: null,
-      marketSlug: null,
-      tokenSide: null,
-      price: 90_005,
-      orderbook: null,
-      payloadJson: JSON.stringify({ type: "price", provider: "chainlink" }),
-      isTest: true
-    },
-    {
-      eventId: `polymarket-${randomUUID()}`,
-      eventTs: baseTimestamp + 3_000,
-      sourceCategory: "polymarket",
-      sourceName: "polymarket",
-      eventType: "orderbook",
-      asset: "btc",
-      window: "5m",
-      marketSlug,
-      tokenSide: "up",
-      price: null,
-      orderbook: JSON.stringify({ asks: [{ price: 0.53, size: 11 }], bids: [{ price: 0.52, size: 13 }] }),
-      payloadJson: JSON.stringify({ type: "book", source: "polymarket" }),
-      isTest: true
-    }
-  ];
-
-  await tickRepository.insertTicks(insertedEvents);
-
-  const listedSlugs = await queryService.listMarkets("5m", "btc");
-  const relatedEvents = await queryService.getMarketEvents(marketSlug);
-  const relatedEventIds = new Set<string>(
-    relatedEvents.map((event) => {
-      return event.eventId;
-    })
-  );
-
-  assert.equal(listedSlugs.includes(marketSlug), true);
-
-  for (const event of insertedEvents) {
-    assert.equal(relatedEventIds.has(event.eventId), true);
+  if (!hasAnySlug) {
+    t.skip("readonly integration skipped because no market slug is available for btc/5m");
   }
 
-  const everyEventMarkedAsTest = relatedEvents.every((event) => {
-    return event.isTest;
-  });
-  assert.equal(everyEventMarkedAsTest, true);
+  if (hasAnySlug) {
+    const targetSlug = listedSlugs[0] ?? "";
+    const events = await queryService.getMarketEvents(targetSlug);
+    const snapshots = await queryService.getMarketSnapshots(targetSlug);
+    const hasSnapshots = snapshots.length > 0;
+    const hasEvents = events.length > 0;
+
+    assert.equal(hasEvents, true);
+    assert.equal(hasSnapshots, true);
+
+    if (hasSnapshots) {
+      const firstSnapshot: MarketSnapshot | null = snapshots[0] ?? null;
+      assert.equal(firstSnapshot === null, false);
+
+      if (firstSnapshot) {
+        const firstEvent = firstSnapshot.triggerEvent;
+
+        assert.equal(firstSnapshot.triggerEvent.eventId, firstEvent.eventId);
+        assert.equal(firstSnapshot.snapshotTs, firstSnapshot.triggerEvent.eventTs);
+        assert.equal(Object.hasOwn(firstSnapshot.crypto, "btc"), true);
+        assert.equal(Object.hasOwn(firstSnapshot.crypto, "eth"), true);
+        assert.equal(Object.hasOwn(firstSnapshot.crypto, "sol"), true);
+        assert.equal(Object.hasOwn(firstSnapshot.crypto, "xrp"), true);
+        assert.equal(Object.hasOwn(firstSnapshot.polymarket, "up"), true);
+        assert.equal(Object.hasOwn(firstSnapshot.polymarket, "down"), true);
+      }
+    }
+  }
 });

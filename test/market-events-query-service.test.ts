@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { MarketEventsQueryService } from "../src/markets/market-events-query-service.ts";
 import { MarketNotFoundError } from "../src/markets/market-not-found-error.ts";
-import type { MarketEvent } from "../src/markets/market-events-types.ts";
+import type { MarketEvent, MarketSnapshot } from "../src/markets/market-events-types.ts";
 
 test("listMarkets returns slugs from registry repository", async () => {
   const service = MarketEventsQueryService.create({
@@ -17,6 +17,9 @@ test("listMarkets returns slugs from registry repository", async () => {
     },
     tickRepository: {
       async getRelatedEventsByMarketRange() {
+        return [];
+      },
+      async getAllAssetsEventsByMarketRange() {
         return [];
       }
     }
@@ -63,6 +66,9 @@ test("getMarketEvents composes related events query using market bounds", async 
         capturedFromTs = options.fromTs;
         capturedToTs = options.toTs;
         return [expectedEvent];
+      },
+      async getAllAssetsEventsByMarketRange() {
+        return [];
       }
     }
   });
@@ -89,11 +95,163 @@ test("getMarketEvents throws MarketNotFoundError when slug is unknown", async ()
     tickRepository: {
       async getRelatedEventsByMarketRange() {
         return [];
+      },
+      async getAllAssetsEventsByMarketRange() {
+        return [];
       }
     }
   });
 
   await assert.rejects(async () => {
     await service.getMarketEvents("missing-slug");
+  }, MarketNotFoundError);
+});
+
+test("getMarketSnapshots composes snapshots with carry-forward state and all-assets enrichment", async () => {
+  const triggerOne: MarketEvent = {
+    eventId: "event-1",
+    eventTs: 1_000,
+    sourceCategory: "exchange",
+    sourceName: "binance",
+    eventType: "price",
+    asset: "btc",
+    window: null,
+    marketSlug: null,
+    tokenSide: null,
+    price: 91_000,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  const triggerTwo: MarketEvent = {
+    eventId: "event-2",
+    eventTs: 1_500,
+    sourceCategory: "polymarket",
+    sourceName: "polymarket",
+    eventType: "price",
+    asset: "btc",
+    window: "5m",
+    marketSlug: "btc-updown-5m-123",
+    tokenSide: "up",
+    price: 0.52,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  const triggerThree: MarketEvent = {
+    eventId: "event-3",
+    eventTs: 2_000,
+    sourceCategory: "chainlink",
+    sourceName: "chainlink",
+    eventType: "price",
+    asset: "btc",
+    window: null,
+    marketSlug: null,
+    tokenSide: null,
+    price: 91_020,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  const allAssetEvent: MarketEvent = {
+    eventId: "event-eth-1",
+    eventTs: 1_200,
+    sourceCategory: "exchange",
+    sourceName: "coinbase",
+    eventType: "price",
+    asset: "eth",
+    window: null,
+    marketSlug: null,
+    tokenSide: null,
+    price: 4_200,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  const polymarketDownBook: MarketEvent = {
+    eventId: "event-down-book",
+    eventTs: 1_800,
+    sourceCategory: "polymarket",
+    sourceName: "polymarket",
+    eventType: "orderbook",
+    asset: "btc",
+    window: "5m",
+    marketSlug: "btc-updown-5m-123",
+    tokenSide: "down",
+    price: null,
+    orderbook: '{"asks":[],"bids":[]}',
+    payloadJson: "{}",
+    isTest: false
+  };
+
+  const service = MarketEventsQueryService.create({
+    marketRegistryRepository: {
+      async listMarketSlugs() {
+        return [];
+      },
+      async getMarketBoundsBySlug(slug) {
+        return { slug, asset: "btc", window: "5m", marketStartTs: 1_000, marketEndTs: 2_000 };
+      }
+    },
+    tickRepository: {
+      async getRelatedEventsByMarketRange() {
+        return [triggerOne, triggerTwo, triggerThree];
+      },
+      async getAllAssetsEventsByMarketRange() {
+        return [triggerOne, allAssetEvent, triggerTwo, polymarketDownBook, triggerThree];
+      }
+    }
+  });
+
+  const snapshots = await service.getMarketSnapshots("btc-updown-5m-123");
+  const firstSnapshot: MarketSnapshot | null = snapshots[0] ?? null;
+  const secondSnapshot: MarketSnapshot | null = snapshots[1] ?? null;
+  const thirdSnapshot: MarketSnapshot | null = snapshots[2] ?? null;
+
+  assert.equal(snapshots.length, 3);
+  assert.equal(firstSnapshot === null, false);
+  assert.equal(secondSnapshot === null, false);
+  assert.equal(thirdSnapshot === null, false);
+
+  if (firstSnapshot && secondSnapshot && thirdSnapshot) {
+    assert.deepEqual(firstSnapshot.triggerEvent, triggerOne);
+    assert.equal(firstSnapshot.snapshotTs, 1_000);
+    assert.deepEqual(firstSnapshot.crypto.btc.binance.price, triggerOne);
+    assert.equal(firstSnapshot.crypto.eth.coinbase.price, null);
+    assert.equal(firstSnapshot.polymarket.up.price, null);
+    assert.deepEqual(secondSnapshot.triggerEvent, triggerTwo);
+    assert.deepEqual(secondSnapshot.crypto.btc.binance.price, triggerOne);
+    assert.deepEqual(secondSnapshot.crypto.eth.coinbase.price, allAssetEvent);
+    assert.deepEqual(secondSnapshot.polymarket.up.price, triggerTwo);
+    assert.equal(secondSnapshot.polymarket.down.orderbook, null);
+    assert.deepEqual(thirdSnapshot.triggerEvent, triggerThree);
+    assert.deepEqual(thirdSnapshot.crypto.btc.chainlink.price, triggerThree);
+    assert.deepEqual(thirdSnapshot.polymarket.down.orderbook, polymarketDownBook);
+    assert.equal(thirdSnapshot.crypto.sol.kraken.price, null);
+  }
+});
+
+test("getMarketSnapshots throws MarketNotFoundError when slug is unknown", async () => {
+  const service = MarketEventsQueryService.create({
+    marketRegistryRepository: {
+      async listMarketSlugs() {
+        return [];
+      },
+      async getMarketBoundsBySlug() {
+        return null;
+      }
+    },
+    tickRepository: {
+      async getRelatedEventsByMarketRange() {
+        return [];
+      },
+      async getAllAssetsEventsByMarketRange() {
+        return [];
+      }
+    }
+  });
+
+  await assert.rejects(async () => {
+    await service.getMarketSnapshots("missing-slug");
   }, MarketNotFoundError);
 });

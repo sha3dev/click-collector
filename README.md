@@ -1,69 +1,280 @@
 # @sha3/click-collector
 
-Real-time collector that stores crypto and Polymarket ticks in ClickHouse, then exposes a TypeScript query API for model training datasets.
+Collects real-time crypto + Polymarket ticks into ClickHouse and exposes a TypeScript query API for training datasets.
 
-## TL;DR
+## Quick Start (60s)
+
+### 1) Install
 
 ```bash
 npm install
-npm run check
-CLICKHOUSE_HOST=http://localhost:8123 npm run start
 ```
 
-Then consume from code:
+### 2) Set minimum env
+
+```bash
+export CLICKHOUSE_HOST=http://localhost:8123
+```
+
+### 3) Start collector runtime
+
+```bash
+npm run start
+```
+
+### 4) Read data from code
 
 ```ts
 import { MarketEventsQueryService } from "@sha3/click-collector";
 
 const query = MarketEventsQueryService.createDefault();
 const slugs = await query.listMarkets("5m", "btc");
-const events = await query.getMarketEvents(slugs[0]);
+
+if (slugs.length > 0) {
+  const slug = slugs[0];
+  const events = await query.getMarketEvents(slug);
+  const snapshots = await query.getMarketSnapshots(slug);
+  console.log({ slug, events: events.length, snapshots: snapshots.length });
+}
 ```
 
-## What It Does
+## Why This Exists
 
-- Ingests real-time ticks from `@sha3/crypto`:
-  - exchanges: `binance`, `coinbase`, `kraken`, `okx`
-  - `chainlink`
-- Ingests real-time ticks from `@sha3/polymarket`:
-  - token price changes (`up`/`down`)
-  - token orderbook changes (`up`/`down`)
-  - market discovery for `5m` and `15m` windows
-- Persists normalized events in ClickHouse.
-- Lets you query:
-  - all stored slugs by (`window`, `asset`)
-  - all events related to one slug.
+Training pipelines need deterministic time-ordered arrays that merge heterogeneous sources:
 
-## Why It Exists
+- exchange ticks
+- chainlink ticks
+- Polymarket token ticks (`up`/`down`)
 
-Model training pipelines need deterministic historical arrays of heterogeneous events (exchange, oracle, Polymarket). This service centralizes ingestion + normalization + retrieval.
+`@sha3/click-collector` centralizes ingestion, normalization, storage, and query semantics.
+
+## Core Concepts
+
+- `market_registry` stores market metadata (`slug`, asset, window, market bounds).
+- `ticks` stores normalized events from all sources.
+- Reads are market-centric (`slug`) and return:
+  - raw correlated events (`getMarketEvents`)
+  - aggregated state points per event (`getMarketSnapshots`)
 
 ## Compatibility
 
-- Node.js 20+
-- ESM (`"type": "module"`)
+- Node.js `20+`
+- ESM package (`"type": "module"`)
 - TypeScript strict mode
-- ClickHouse reachable from runtime
+- ClickHouse must be reachable from runtime
+
+## Public API
+
+## `MarketEventsQueryService`
+
+### Factory
+
+- `static create(options): MarketEventsQueryService`
+- `static createDefault(): MarketEventsQueryService`
+
+### Methods
+
+- `listMarkets(window, asset): Promise<string[]>`
+- `getMarketEvents(slug): Promise<MarketEvent[]>`
+- `getMarketSnapshots(slug): Promise<MarketSnapshot[]>`
+
+### Behavior Contract
+
+### `listMarkets(window, asset)`
+
+Returns known market slugs for the given pair.
+
+### `getMarketEvents(slug)`
+
+Returns all events correlated to that market:
+
+- all `polymarket` events where `market_slug = slug`
+- all `exchange` + `chainlink` events for the same market asset inside `[market_start_ts, market_end_ts]`
+
+Sorted by:
+
+- `event_ts ASC`
+- `source_category ASC`
+- `source_name ASC`
+- `event_id ASC`
+
+### `getMarketSnapshots(slug)`
+
+Returns aggregated state over time with **same cardinality and order** as `getMarketEvents(slug)`.
+
+Each result is a `MarketSnapshot`:
+
+- `triggerEvent`: event that defines this state point
+- `snapshotTs`: equals `triggerEvent.eventTs`
+- `crypto`: latest known values for all assets (`btc|eth|sol|xrp`) and providers (`binance|coinbase|kraken|okx|chainlink`)
+- `polymarket`: latest known values for both sides (`up`, `down`) of the requested market
+
+Null semantics:
+
+- if a slot has never received a matching event by that time, it is `null`
+
+## Exported Types
+
+- `AssetSymbol = "btc" | "eth" | "sol" | "xrp"`
+- `MarketWindow = "5m" | "15m"`
+- `EventType = "price" | "orderbook"`
+- `MarketEvent`
+- `MarketSnapshot`
+
+### `MarketEvent` shape
+
+```ts
+type MarketEvent = {
+  eventId: string;
+  eventTs: number;
+  sourceCategory: "exchange" | "chainlink" | "polymarket";
+  sourceName: string;
+  eventType: "price" | "orderbook";
+  asset: "btc" | "eth" | "sol" | "xrp";
+  window: "5m" | "15m" | null;
+  marketSlug: string | null;
+  tokenSide: "up" | "down" | null;
+  price: number | null;
+  orderbook: string | null;
+  payloadJson: string;
+  isTest: boolean;
+};
+```
+
+### `MarketSnapshot` shape (simplified)
+
+```ts
+type MarketSnapshot = {
+  triggerEvent: MarketEvent;
+  snapshotTs: number;
+  crypto: { btc: SnapshotAssetState; eth: SnapshotAssetState; sol: SnapshotAssetState; xrp: SnapshotAssetState };
+  polymarket: { up: SnapshotEventState; down: SnapshotEventState };
+};
+
+type SnapshotAssetState = {
+  binance: SnapshotEventState;
+  coinbase: SnapshotEventState;
+  kraken: SnapshotEventState;
+  okx: SnapshotEventState;
+  chainlink: SnapshotEventState;
+};
+
+type SnapshotEventState = { price: MarketEvent | null; orderbook: MarketEvent | null };
+```
+
+## Integration Guide
+
+## Use as a library in another project
+
+### Install
+
+```bash
+npm install @sha3/click-collector
+```
+
+### Query usage
+
+```ts
+import { MarketEventsQueryService, type MarketSnapshot } from "@sha3/click-collector";
+
+const query = MarketEventsQueryService.createDefault();
+const slugs = await query.listMarkets("15m", "eth");
+
+for (const slug of slugs) {
+  const snapshots: MarketSnapshot[] = await query.getMarketSnapshots(slug);
+  if (snapshots.length > 0) {
+    const last = snapshots[snapshots.length - 1];
+    const ethBinancePrice = last.crypto.eth.binance.price?.price ?? null;
+    console.log({ slug, snapshotTs: last.snapshotTs, ethBinancePrice });
+  }
+}
+```
+
+## Use as runtime service
+
+```bash
+CLICKHOUSE_HOST=http://localhost:8123 node --import tsx src/index.ts
+```
+
+## Configuration Reference (`src/config.ts`)
+
+Import style inside project code is fixed:
+
+```ts
+import CONFIG from "../config.ts";
+```
+
+### ClickHouse
+
+- `CLICKHOUSE_HOST`: ClickHouse URL
+- `CLICKHOUSE_DATABASE`: target database name
+- `CLICKHOUSE_USER`: username
+- `CLICKHOUSE_PASSWORD`: password
+- `CLICKHOUSE_TICKS_TABLE`: ticks table name
+- `CLICKHOUSE_MARKET_REGISTRY_TABLE`: market registry table name
+
+### Insert behavior
+
+- `CLICKHOUSE_ASYNC_INSERT`: `1` enables async insert mode
+- `CLICKHOUSE_WAIT_FOR_ASYNC_INSERT`: `0` fire-and-forget, `1` wait for completion
+
+### Ingestion buffering/coalescing
+
+- `INGEST_BATCH_SIZE`: max buffered events before flush
+- `INGEST_FLUSH_INTERVAL_MS`: periodic flush interval
+- `INGEST_COALESCE_WINDOW_MS`: dedupe/coalesce window per key (`0` disables)
+- `INGEST_COALESCE_CLEANUP_INTERVAL_MS`: in-memory coalesce cleanup interval
+- `INGEST_COALESCE_KEY_TTL_MS`: idle TTL for coalesce keys
+
+### Data shape / retention
+
+- `ORDERBOOK_MAX_LEVELS`: stored asks/bids levels per orderbook event
+- `TICKS_TTL_DAYS`: ticks retention in days (`0` disables TTL modification)
+
+### Market discovery / coverage
+
+- `POLYMARKET_DISCOVERY_INTERVAL_MS`: Polymarket discovery refresh interval
+- `SUPPORTED_ASSETS`: supported symbols (`btc|eth|sol|xrp`)
+- `SUPPORTED_WINDOWS`: supported windows (`5m|15m`)
+- `CRYPTO_PROVIDERS`: enabled crypto providers
+
+### Example `.env`
+
+```dotenv
+CLICKHOUSE_HOST=http://localhost:8123
+CLICKHOUSE_DATABASE=default
+CLICKHOUSE_USER=default
+CLICKHOUSE_PASSWORD=
+CLICKHOUSE_TICKS_TABLE=ticks
+CLICKHOUSE_MARKET_REGISTRY_TABLE=market_registry
+CLICKHOUSE_ASYNC_INSERT=1
+CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=0
+INGEST_BATCH_SIZE=1000
+INGEST_FLUSH_INTERVAL_MS=2000
+INGEST_COALESCE_WINDOW_MS=500
+INGEST_COALESCE_CLEANUP_INTERVAL_MS=60000
+INGEST_COALESCE_KEY_TTL_MS=3600000
+ORDERBOOK_MAX_LEVELS=5
+TICKS_TTL_DAYS=90
+POLYMARKET_DISCOVERY_INTERVAL_MS=30000
+```
 
 ## Data Model (ClickHouse)
 
-Query-shape assumption used in physical design:
-
-- reads are single-asset (`btc` or `eth` or `sol` or `xrp`)
-- reads are single-market per request (one `slug` at a time)
-
 ### `market_registry`
 
-Catalog of Polymarket markets.
+Stores discovered Polymarket markets.
 
 Important columns:
 
 - `slug`
-- `asset` (`btc|eth|sol|xrp`)
-- `window` (`5m|15m`)
-- `market_start_ts`, `market_end_ts`
-- `up_asset_id`, `down_asset_id`
-- `is_test` (`0|1`, marks records inserted by tests)
+- `asset`
+- `window`
+- `market_start_ts`
+- `market_end_ts`
+- `up_asset_id`
+- `down_asset_id`
+- `is_test`
 
 Engine:
 
@@ -73,217 +284,57 @@ Engine:
 
 ### `ticks`
 
-Unified event storage.
+Stores normalized events across all sources.
 
 Important columns:
 
 - `event_id`
 - `event_ts`
-- `source_category` (`exchange|chainlink|polymarket`)
+- `source_category`
 - `source_name`
-- `event_type` (`price|orderbook`)
+- `event_type`
 - `asset`
 - `window`
 - `market_slug`
-- `token_side` (`up|down`)
+- `token_side`
 - `payload_json`
-- `is_test` (`0|1`, marks records inserted by tests)
+- `is_test`
 
 Engine:
 
 - `MergeTree`
 - `PARTITION BY (asset, toYYYYMM(event_ts))`
-- `TTL event_ts + INTERVAL 90 DAY` (default; configurable)
+- `TTL event_ts + INTERVAL 90 DAY` (default)
 - `ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id)`
 
-## Public API Reference
+## Operational Safety (Important)
 
-### `MarketEventsQueryService`
+If your ClickHouse has production-scale data, avoid destructive SQL in routine workflows.
 
-- `static create(options): MarketEventsQueryService`
-- `static createDefault(): MarketEventsQueryService`
-- `listMarkets(window, asset): Promise<string[]>`
-- `getMarketEvents(slug): Promise<MarketEvent[]>`
+Avoid on production tables:
 
-`getMarketEvents(slug)` correlation rule:
+- `DROP TABLE`
+- `TRUNCATE TABLE`
+- broad `ALTER TABLE ... DELETE`
 
-- includes all Polymarket events with `market_slug = slug`
-- includes exchange + chainlink events for same `asset` inside the market time range.
-
-### Exported types
-
-- `AssetSymbol = "btc" | "eth" | "sol" | "xrp"`
-- `MarketWindow = "5m" | "15m"`
-- `EventType = "price" | "orderbook"`
-- `MarketEvent`
-  - includes `isTest: boolean` (`true` when row comes from test data)
-
-## Delete Test Data (ClickHouse)
-
-If you need to clean only test rows, run:
-
-```sql
-ALTER TABLE default.market_registry DELETE WHERE is_test = 1;
-ALTER TABLE default.ticks DELETE WHERE is_test = 1;
-```
-
-Check mutation status:
-
-```sql
-SELECT database, table, mutation_id, is_done, latest_failed_part, latest_fail_reason
-FROM system.mutations
-WHERE database = 'default' AND table IN ('market_registry', 'ticks')
-ORDER BY create_time DESC;
-```
-
-Optional optimization after mutation completion:
-
-```sql
-OPTIMIZE TABLE default.market_registry FINAL;
-OPTIMIZE TABLE default.ticks FINAL;
-```
-
-## Reset Database to Initial State
-
-Stop the collector before reset to avoid new inserts during cleanup.
-
-### Fast reset (keep table definitions)
-
-```sql
-TRUNCATE TABLE default.market_registry;
-TRUNCATE TABLE default.ticks;
-```
-
-### Full reset (drop and recreate tables with current schema)
-
-```sql
-DROP TABLE IF EXISTS default.market_registry;
-DROP TABLE IF EXISTS default.ticks;
-
-CREATE TABLE default.market_registry (
-  slug String,
-  asset LowCardinality(String),
-  window LowCardinality(String),
-  market_start_ts DateTime64(3, 'UTC'),
-  market_end_ts DateTime64(3, 'UTC'),
-  up_asset_id String,
-  down_asset_id String,
-  created_at DateTime64(3, 'UTC'),
-  updated_at DateTime64(3, 'UTC'),
-  is_test UInt8 DEFAULT 0
-)
-ENGINE = ReplacingMergeTree(updated_at)
-PARTITION BY asset
-ORDER BY (slug);
-
-CREATE TABLE default.ticks (
-  event_id String,
-  event_ts DateTime64(3, 'UTC'),
-  ingested_at DateTime64(3, 'UTC'),
-  source_category LowCardinality(String),
-  source_name LowCardinality(String),
-  event_type LowCardinality(String),
-  asset LowCardinality(String),
-  window Nullable(String),
-  market_slug Nullable(String),
-  token_side Nullable(String),
-  payload_json String,
-  is_test UInt8 DEFAULT 0
-)
-ENGINE = MergeTree
-PARTITION BY (asset, toYYYYMM(event_ts))
-TTL event_ts + INTERVAL 90 DAY
-ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id);
-```
-
-## Integration Guide (External Projects)
-
-### 1) Install
-
-```bash
-npm install @sha3/click-collector
-```
-
-### 2) Run collector process
-
-```bash
-CLICKHOUSE_HOST=http://localhost:8123 node --import tsx src/index.ts
-```
-
-### 3) Query training data
-
-```ts
-import { MarketEventsQueryService } from "@sha3/click-collector";
-
-const query = MarketEventsQueryService.createDefault();
-const slugs = await query.listMarkets("5m", "btc");
-
-for (const slug of slugs) {
-  const events = await query.getMarketEvents(slug);
-  console.log(slug, events.length);
-}
-```
-
-## Configuration (`src/config.ts`)
-
-All config is centralized in the default export `CONFIG`.
-
-- `CLICKHOUSE_HOST`: ClickHouse URL
-- `CLICKHOUSE_DATABASE`: database name
-- `CLICKHOUSE_USER`: username
-- `CLICKHOUSE_PASSWORD`: password
-- `CLICKHOUSE_TICKS_TABLE`: ticks table name
-- `CLICKHOUSE_MARKET_REGISTRY_TABLE`: market registry table name
-- `INGEST_BATCH_SIZE`: buffer size before insert flush
-- `INGEST_FLUSH_INTERVAL_MS`: periodic flush interval
-- `INGEST_COALESCE_WINDOW_MS`: max write frequency per coalesce key (`source + type + asset + market context`); `0` disables coalesce
-- `INGEST_COALESCE_CLEANUP_INTERVAL_MS`: periodic cleanup interval for coalesce in-memory keys
-- `INGEST_COALESCE_KEY_TTL_MS`: inactivity TTL for coalesce keys in memory
-- `ORDERBOOK_MAX_LEVELS`: max asks/bids levels persisted per orderbook tick (default `5`)
-- `TICKS_TTL_DAYS`: retention window in days for `ticks` table (`0` disables TTL modification)
-- `CLICKHOUSE_ASYNC_INSERT`: ClickHouse async insert mode (`1` enabled)
-- `CLICKHOUSE_WAIT_FOR_ASYNC_INSERT`: wait behavior for async insert (`0` fire-and-forget, `1` wait)
-- `POLYMARKET_DISCOVERY_INTERVAL_MS`: market discovery refresh interval
-- `SUPPORTED_ASSETS`: tracked symbols (`btc|eth|sol|xrp`)
-- `SUPPORTED_WINDOWS`: tracked windows (`5m|15m`)
-- `CRYPTO_PROVIDERS`: tracked providers
-
-Example:
-
-```dotenv
-CLICKHOUSE_HOST=http://localhost:8123
-CLICKHOUSE_DATABASE=default
-CLICKHOUSE_USER=default
-CLICKHOUSE_PASSWORD=
-CLICKHOUSE_TICKS_TABLE=ticks
-CLICKHOUSE_MARKET_REGISTRY_TABLE=market_registry
-INGEST_BATCH_SIZE=200
-INGEST_FLUSH_INTERVAL_MS=1000
-INGEST_COALESCE_WINDOW_MS=250
-INGEST_COALESCE_CLEANUP_INTERVAL_MS=60000
-INGEST_COALESCE_KEY_TTL_MS=3600000
-ORDERBOOK_MAX_LEVELS=5
-TICKS_TTL_DAYS=90
-CLICKHOUSE_ASYNC_INSERT=1
-CLICKHOUSE_WAIT_FOR_ASYNC_INSERT=0
-POLYMARKET_DISCOVERY_INTERVAL_MS=30000
-```
+If cleanup is required, prefer explicit test markers (`is_test = 1`) and run in controlled maintenance windows.
 
 ## Scripts
 
-- `npm run start`: starts autonomous collector runtime
+- `npm run start`: start collector runtime
+- `npm run test`: run tests (`node scripts/run-tests.mjs`)
 - `npm run check`: lint + format check + typecheck + tests
-- `npm run fix`: lint/prettier auto-fix
-- `npm run test`: node test runner via `scripts/run-tests.mjs`
+- `npm run fix`: eslint/prettier autofix
 
 ## Testing
 
-Current suite covers:
+Current coverage includes:
 
-- crypto event normalization (`price`, `orderbook`)
-- polymarket market discovery + stream mapping
-- query service behavior (`listMarkets`, `getMarketEvents`)
-- `MarketNotFoundError` path
+- crypto mapping (`price`, `orderbook`)
+- Polymarket discovery + stream mapping
+- query service (`listMarkets`, `getMarketEvents`, `getMarketSnapshots`)
+- error paths (`MarketNotFoundError`)
+- read-only ClickHouse integration path
 
 Run:
 
@@ -291,13 +342,45 @@ Run:
 npm run test
 ```
 
-## AI Usage
+## AI Usage (for LLM agents)
 
-If you use coding assistants in this repo:
+Treat this section as execution contract when an assistant edits this repo.
 
-- treat `AGENTS.md` as blocking contract
-- keep class-first design and constructor injection
-- keep single-return policy and explicit braces
-- keep feature-folder architecture
-- always add/update tests for behavior changes
-- run `npm run check` before finalizing
+### Required behavior
+
+- read and obey `AGENTS.md` first
+- preserve class-first architecture and constructor injection
+- follow single-return and explicit braces policy
+- update tests for behavior changes
+- keep new implementation files in TypeScript
+- run checks before finalizing (`npm run check`)
+
+### Prompt template for agents
+
+Use this prompt when delegating tasks to an LLM:
+
+```text
+You are modifying @sha3/click-collector.
+
+Constraints:
+1) AGENTS.md is blocking contract.
+2) Do not modify managed files listed in AGENTS.md.
+3) No destructive ClickHouse operations on production-scale tables.
+4) For behavior changes: update/add tests.
+5) Run npm run test and report results.
+
+Task:
+<describe exact change>
+
+Deliver:
+- files changed
+- behavior impact
+- test results
+- follow-up risks
+```
+
+### Query semantics to remember
+
+- `getMarketEvents(slug)` returns correlated raw events
+- `getMarketSnapshots(slug)` returns one aggregated snapshot per correlated raw event
+- snapshots are fixed-shape and null-filled for unseen slots

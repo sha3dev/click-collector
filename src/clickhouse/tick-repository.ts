@@ -26,6 +26,7 @@ const TICKS_TABLE = CONFIG.CLICKHOUSE_TICKS_TABLE;
 type TickRepositoryOptions = { client: ClickHouseClientContract };
 
 type TickRangeQueryOptions = { slug: string; asset: string; fromTs: number; toTs: number };
+type TickAllAssetsRangeQueryOptions = { slug: string; fromTs: number; toTs: number };
 
 export class TickRepository {
   /**
@@ -285,6 +286,37 @@ ${ttlClause}
       });
     } catch (error) {
       throw ClickHouseQueryError.forOperation("getRelatedEventsByMarketRange", this.stringifyError(error));
+    }
+
+    return events;
+  }
+
+  public async getAllAssetsEventsByMarketRange(options: TickAllAssetsRangeQueryOptions): Promise<MarketEvent[]> {
+    const escapedSlug = this.escapeLiteral(options.slug);
+    const fromIsoText = TickRepository.toDateTime64Text(options.fromTs);
+    const toIsoText = TickRepository.toDateTime64Text(options.toTs);
+    const query = `
+      SELECT event_id, event_ts, ingested_at, source_category, source_name, event_type, asset, window, market_slug, token_side, payload_json, is_test
+      FROM ${TICKS_TABLE}
+      WHERE
+        (source_category = 'polymarket' AND market_slug = '${escapedSlug}')
+        OR
+        (source_category IN ('exchange', 'chainlink') AND event_ts >= toDateTime64('${fromIsoText}', 3, 'UTC') AND event_ts <= toDateTime64('${toIsoText}', 3, 'UTC'))
+      ORDER BY event_ts ASC, source_category ASC, source_name ASC, event_id ASC
+    `;
+
+    let events: MarketEvent[] = [];
+
+    try {
+      const resultSet = await this.client.query({ query, format: "JSONEachRow" });
+      const result = await resultSet.json<TickSelectRow>();
+      const rows = TickRepository.toRows(result);
+      events = rows.map((row) => {
+        const event = TickRepository.fromRowToEvent(row);
+        return event;
+      });
+    } catch (error) {
+      throw ClickHouseQueryError.forOperation("getAllAssetsEventsByMarketRange", this.stringifyError(error));
     }
 
     return events;
