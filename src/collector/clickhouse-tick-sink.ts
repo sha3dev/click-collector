@@ -9,6 +9,7 @@
  */
 
 import CONFIG from "../config.ts";
+import { MarketEventStream } from "../markets/market-event-stream.ts";
 import type { MarketEvent } from "../markets/market-events-types.ts";
 import type { TickRepository } from "../clickhouse/tick-repository.ts";
 
@@ -183,6 +184,7 @@ export class ClickHouseTickSink {
 
       if (shouldKeepEvent) {
         this.buffer.push(event);
+        MarketEventStream.publish(event);
       }
     }
 

@@ -1,9 +1,19 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
+import { MarketEventStream } from "../src/markets/market-event-stream.ts";
 import { MarketEventsQueryService } from "../src/markets/market-events-query-service.ts";
 import { MarketNotFoundError } from "../src/markets/market-not-found-error.ts";
 import type { MarketEvent, MarketRecord, MarketSnapshot } from "../src/markets/market-events-types.ts";
+
+function sleep(delayMs: number): Promise<void> {
+  const sleepPromise = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      resolve();
+    }, delayMs);
+  });
+  return sleepPromise;
+}
 
 test("listMarkets returns market records from registry repository", async () => {
   const marketOne: MarketRecord = {
@@ -81,7 +91,7 @@ test("getMarketEvents composes related events query using market bounds", async 
         return [];
       },
       async getMarketBoundsBySlug(slug) {
-        return { slug, asset: "btc", window: "5m", marketStartTs: 1000, marketEndTs: 2000, priceToBeat: 90_000 };
+        return { slug, asset: "btc", window: "5m", marketStartTs: 1000, marketEndTs: 2000, priceToBeat: 90_000, finalPrice: 90_010 };
       }
     },
     tickRepository: {
@@ -215,7 +225,7 @@ test("getMarketSnapshots composes snapshots with carry-forward state and all-ass
         return [];
       },
       async getMarketBoundsBySlug(slug) {
-        return { slug, asset: "btc", window: "5m", marketStartTs: 1_000, marketEndTs: 2_000, priceToBeat: 91_111 };
+        return { slug, asset: "btc", window: "5m", marketStartTs: 1_000, marketEndTs: 2_000, priceToBeat: 91_111, finalPrice: 91_222 };
       }
     },
     tickRepository: {
@@ -246,6 +256,7 @@ test("getMarketSnapshots composes snapshots with carry-forward state and all-ass
     assert.equal(firstSnapshot.marketStartTs, 1_000);
     assert.equal(firstSnapshot.marketEndTs, 2_000);
     assert.equal(firstSnapshot.priceToBeat, 91_111);
+    assert.equal(firstSnapshot.finalPrice, 91_222);
     assert.deepEqual(firstSnapshot.crypto.btc.binance.price, triggerOne);
     assert.equal(firstSnapshot.crypto.eth.coinbase.price, null);
     assert.equal(firstSnapshot.polymarket.up.price, null);
@@ -255,6 +266,7 @@ test("getMarketSnapshots composes snapshots with carry-forward state and all-ass
     assert.equal(secondSnapshot.marketStartTs, 1_000);
     assert.equal(secondSnapshot.marketEndTs, 2_000);
     assert.equal(secondSnapshot.priceToBeat, 91_111);
+    assert.equal(secondSnapshot.finalPrice, 91_222);
     assert.deepEqual(secondSnapshot.crypto.btc.binance.price, triggerOne);
     assert.deepEqual(secondSnapshot.crypto.eth.coinbase.price, allAssetEvent);
     assert.deepEqual(secondSnapshot.polymarket.up.price, triggerTwo);
@@ -265,6 +277,7 @@ test("getMarketSnapshots composes snapshots with carry-forward state and all-ass
     assert.equal(thirdSnapshot.marketStartTs, 1_000);
     assert.equal(thirdSnapshot.marketEndTs, 2_000);
     assert.equal(thirdSnapshot.priceToBeat, 91_111);
+    assert.equal(thirdSnapshot.finalPrice, 91_222);
     assert.deepEqual(thirdSnapshot.crypto.btc.chainlink.price, triggerThree);
     assert.deepEqual(thirdSnapshot.polymarket.down.orderbook, polymarketDownBook);
     assert.equal(thirdSnapshot.crypto.sol.kraken.price, null);
@@ -294,4 +307,85 @@ test("getMarketSnapshots throws MarketNotFoundError when slug is unknown", async
   await assert.rejects(async () => {
     await service.getMarketSnapshots("missing-slug");
   }, MarketNotFoundError);
+});
+
+test("addSnapshotListener emits only new snapshots after listener registration", async () => {
+  const baselineEvent: MarketEvent = {
+    eventId: "base-1",
+    eventTs: 1_000,
+    sourceCategory: "exchange",
+    sourceName: "binance",
+    eventType: "price",
+    asset: "btc",
+    window: null,
+    marketSlug: null,
+    tokenSide: null,
+    price: 100,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  const liveEvent: MarketEvent = {
+    eventId: "live-2",
+    eventTs: 1_500,
+    sourceCategory: "exchange",
+    sourceName: "binance",
+    eventType: "price",
+    asset: "btc",
+    window: null,
+    marketSlug: null,
+    tokenSide: null,
+    price: 101,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  let events: MarketEvent[] = [baselineEvent];
+  const receivedSnapshots: MarketSnapshot[] = [];
+  const service = MarketEventsQueryService.create({
+    marketRegistryRepository: {
+      async listMarkets() {
+        return [
+          {
+            slug: "btc-updown-5m-123",
+            asset: "btc",
+            window: "5m",
+            marketStartTs: 0,
+            marketEndTs: Date.now() + 60_000,
+            upAssetId: "up-1",
+            downAssetId: "down-1",
+            priceToBeat: 99,
+            finalPrice: null,
+            isTest: false
+          }
+        ];
+      },
+      async getMarketBoundsBySlug() {
+        return { slug: "btc-updown-5m-123", asset: "btc", window: "5m", marketStartTs: 0, marketEndTs: Date.now() + 60_000, priceToBeat: 99, finalPrice: null };
+      }
+    },
+    tickRepository: {
+      async getRelatedEventsByMarketRange() {
+        return events;
+      },
+      async getAllAssetsEventsByMarketRange() {
+        return events;
+      }
+    }
+  });
+  const listenerId = await service.addSnapshotListener({
+    window: "5m",
+    asset: "btc",
+    listener: (snapshot) => {
+      receivedSnapshots.push(snapshot);
+    }
+  });
+
+  assert.equal(receivedSnapshots.length, 0);
+  events = [baselineEvent, liveEvent];
+  MarketEventStream.publish(liveEvent);
+  await sleep(20);
+  assert.equal(receivedSnapshots.length, 1);
+  assert.equal(receivedSnapshots[0]?.triggerEvent.eventId, "live-2");
+  service.removeSnapshotListener(listenerId);
 });

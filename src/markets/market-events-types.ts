@@ -76,6 +76,7 @@ export type MarketSnapshot = {
   marketStartTs: number;
   marketEndTs: number;
   priceToBeat: number | null;
+  finalPrice: number | null;
   crypto: { btc: SnapshotAssetState; eth: SnapshotAssetState; sol: SnapshotAssetState; xrp: SnapshotAssetState };
   polymarket: { up: SnapshotEventState; down: SnapshotEventState };
 };

@@ -96,7 +96,15 @@ export class MarketRegistryRepository {
   private static fromRowToBounds(row: MarketRegistrySelectRow): MarketBounds {
     const marketStartTs = Date.parse(row.market_start_ts.replace(" ", "T").concat("Z"));
     const marketEndTs = Date.parse(row.market_end_ts.replace(" ", "T").concat("Z"));
-    const bounds: MarketBounds = { slug: row.slug, asset: row.asset, window: row.window, marketStartTs, marketEndTs, priceToBeat: row.price_to_beat };
+    const bounds: MarketBounds = {
+      slug: row.slug,
+      asset: row.asset,
+      window: row.window,
+      marketStartTs,
+      marketEndTs,
+      priceToBeat: row.price_to_beat,
+      finalPrice: row.final_price
+    };
 
     return bounds;
   }

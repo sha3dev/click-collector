@@ -1,10 +1,24 @@
 {
   "name": "@sha3/click-collector",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": false,
   "type": "module",
+  "main": "./dist/public-api.js",
+  "types": "./dist/public-api.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/public-api.d.ts",
+      "import": "./dist/public-api.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "start": "node --import tsx src/index.ts",
+    "build": "node scripts/build-package.mjs",
+    "prepack": "npm run build",
     "check": "npm run lint && npm run format:check && npm run typecheck && npm run test",
     "fix": "npm run lint:fix && npm run format:write",
     "lint": "eslint .",

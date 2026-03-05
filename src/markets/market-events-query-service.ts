@@ -2,7 +2,7 @@
  * @section imports:externals
  */
 
-// empty
+import { randomUUID } from "node:crypto";
 
 /**
  * @section imports:internals
@@ -10,8 +10,10 @@
 
 import { ClickHouseClientFactory } from "../clickhouse/clickhouse-client-factory.ts";
 import type { ClickHouseClientContract } from "../clickhouse/clickhouse-types.ts";
+import LOGGER from "../logger.ts";
 import { MarketRegistryRepository } from "../clickhouse/market-registry-repository.ts";
 import { TickRepository } from "../clickhouse/tick-repository.ts";
+import { MarketEventStream } from "./market-event-stream.ts";
 import { MarketNotFoundError } from "./market-events-errors.ts";
 import { CRYPTO_SOURCE_NAMES } from "./market-events-types.ts";
 import type {
@@ -41,13 +43,25 @@ type MarketEventsQueryServiceOptions = {
 };
 
 type MarketSnapshotState = Pick<MarketSnapshot, "crypto" | "polymarket">;
+type SnapshotListener = (snapshot: MarketSnapshot) => void;
+type AddSnapshotListenerOptions = { window: MarketWindow; asset: AssetSymbol; listener: SnapshotListener };
+type SnapshotListenerState = {
+  id: string;
+  window: MarketWindow;
+  asset: AssetSymbol;
+  listener: SnapshotListener;
+  activeSlug: string | null;
+  emittedEventIds: Set<string>;
+  isSyncing: boolean;
+  hasPendingSync: boolean;
+};
 
 export class MarketEventsQueryService {
   /**
    * @section private:attributes
    */
 
-  // empty
+  private marketEventStreamListenerId: string | null;
 
   /**
    * @section protected:attributes
@@ -61,6 +75,7 @@ export class MarketEventsQueryService {
 
   private readonly marketRegistryRepository: Pick<MarketRegistryRepository, "listMarkets" | "getMarketBoundsBySlug">;
   private readonly tickRepository: Pick<TickRepository, "getRelatedEventsByMarketRange" | "getAllAssetsEventsByMarketRange">;
+  private readonly snapshotListenersById: Map<string, SnapshotListenerState>;
 
   /**
    * @section public:properties
@@ -75,6 +90,8 @@ export class MarketEventsQueryService {
   public constructor(options: MarketEventsQueryServiceOptions) {
     this.marketRegistryRepository = options.marketRegistryRepository;
     this.tickRepository = options.tickRepository;
+    this.snapshotListenersById = new Map<string, SnapshotListenerState>();
+    this.marketEventStreamListenerId = null;
   }
 
   /**
@@ -214,7 +231,7 @@ export class MarketEventsQueryService {
   private static buildSnapshot(
     triggerEvent: MarketEvent,
     state: MarketSnapshotState,
-    market: { asset: AssetSymbol; window: MarketWindow; marketStartTs: number; marketEndTs: number; priceToBeat: number | null }
+    market: { asset: AssetSymbol; window: MarketWindow; marketStartTs: number; marketEndTs: number; priceToBeat: number | null; finalPrice: number | null }
   ): MarketSnapshot {
     const snapshotState = MarketEventsQueryService.cloneSnapshotState(state);
     const snapshot: MarketSnapshot = {
@@ -225,6 +242,7 @@ export class MarketEventsQueryService {
       marketStartTs: market.marketStartTs,
       marketEndTs: market.marketEndTs,
       priceToBeat: market.priceToBeat,
+      finalPrice: market.finalPrice,
       crypto: snapshotState.crypto,
       polymarket: snapshotState.polymarket
     };
@@ -234,7 +252,7 @@ export class MarketEventsQueryService {
   private static buildMarketSnapshots(
     triggerEvents: MarketEvent[],
     allEvents: MarketEvent[],
-    market: { asset: AssetSymbol; window: MarketWindow; marketStartTs: number; marketEndTs: number; priceToBeat: number | null }
+    market: { asset: AssetSymbol; window: MarketWindow; marketStartTs: number; marketEndTs: number; priceToBeat: number | null; finalPrice: number | null }
   ): MarketSnapshot[] {
     const snapshots: MarketSnapshot[] = [];
     const state = MarketEventsQueryService.createEmptySnapshotState();
@@ -269,6 +287,118 @@ export class MarketEventsQueryService {
     }
 
     return snapshots;
+  }
+
+  private stringifyError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    return message;
+  }
+
+  private ensureMarketEventStreamListener(): void {
+    if (!this.marketEventStreamListenerId) {
+      const listenerId = MarketEventStream.addListener((event) => {
+        const syncPromise = this.onMarketEvent(event);
+        void syncPromise;
+      });
+      this.marketEventStreamListenerId = listenerId;
+    }
+  }
+
+  private cleanupMarketEventStreamListener(): void {
+    if (this.marketEventStreamListenerId && this.snapshotListenersById.size === 0) {
+      MarketEventStream.removeListener(this.marketEventStreamListenerId);
+      this.marketEventStreamListenerId = null;
+    }
+  }
+
+  private async findActiveMarket(window: MarketWindow, asset: AssetSymbol): Promise<MarketRecord | null> {
+    const nowTs = Date.now();
+    const markets = await this.marketRegistryRepository.listMarkets(window, asset);
+    let activeMarket: MarketRecord | null = null;
+
+    for (const market of markets) {
+      const isActive = market.marketStartTs <= nowTs && market.marketEndTs >= nowTs;
+
+      if (isActive) {
+        activeMarket = market;
+        break;
+      }
+    }
+
+    return activeMarket;
+  }
+
+  private async emitUnseenSnapshots(listenerState: SnapshotListenerState, slug: string): Promise<void> {
+    const snapshots = await this.getMarketSnapshots(slug);
+
+    for (const snapshot of snapshots) {
+      const eventId = snapshot.triggerEvent.eventId;
+
+      if (!listenerState.emittedEventIds.has(eventId)) {
+        listenerState.listener(snapshot);
+        listenerState.emittedEventIds.add(eventId);
+      }
+    }
+  }
+
+  private async syncListenerWithActiveMarket(listenerState: SnapshotListenerState): Promise<void> {
+    const activeMarket = await this.findActiveMarket(listenerState.window, listenerState.asset);
+
+    if (activeMarket) {
+      const hasMarketChanged = listenerState.activeSlug !== activeMarket.slug;
+
+      if (hasMarketChanged) {
+        listenerState.activeSlug = activeMarket.slug;
+        listenerState.emittedEventIds.clear();
+      }
+
+      await this.emitUnseenSnapshots(listenerState, activeMarket.slug);
+    }
+  }
+
+  private async initializeListenerBaseline(listenerState: SnapshotListenerState): Promise<void> {
+    const activeMarket = await this.findActiveMarket(listenerState.window, listenerState.asset);
+
+    if (activeMarket) {
+      listenerState.activeSlug = activeMarket.slug;
+      const snapshots = await this.getMarketSnapshots(activeMarket.slug);
+
+      for (const snapshot of snapshots) {
+        listenerState.emittedEventIds.add(snapshot.triggerEvent.eventId);
+      }
+    }
+  }
+
+  private async runListenerSync(listenerState: SnapshotListenerState): Promise<void> {
+    if (!listenerState.isSyncing) {
+      listenerState.isSyncing = true;
+
+      try {
+        await this.syncListenerWithActiveMarket(listenerState);
+      } catch (error) {
+        const reason = this.stringifyError(error);
+        LOGGER.error(`snapshot listener sync failed: id=${listenerState.id}; reason=${reason}`);
+      } finally {
+        listenerState.isSyncing = false;
+
+        if (listenerState.hasPendingSync) {
+          listenerState.hasPendingSync = false;
+          const rerunPromise = this.runListenerSync(listenerState);
+          void rerunPromise;
+        }
+      }
+    } else {
+      listenerState.hasPendingSync = true;
+    }
+  }
+
+  private async onMarketEvent(event: MarketEvent): Promise<void> {
+    for (const listenerState of this.snapshotListenersById.values()) {
+      if (listenerState.asset === event.asset) {
+        const syncPromise = this.runListenerSync(listenerState);
+        void syncPromise;
+      }
+    }
   }
 
   /**
@@ -325,13 +455,39 @@ export class MarketEventsQueryService {
         window: marketBounds.window,
         marketStartTs: marketBounds.marketStartTs,
         marketEndTs: marketBounds.marketEndTs,
-        priceToBeat: marketBounds.priceToBeat
+        priceToBeat: marketBounds.priceToBeat,
+        finalPrice: marketBounds.finalPrice
       });
     } else {
       throw MarketNotFoundError.forSlug(slug);
     }
 
     return snapshots;
+  }
+
+  public async addSnapshotListener(options: AddSnapshotListenerOptions): Promise<string> {
+    const listenerId = randomUUID();
+    const listenerState: SnapshotListenerState = {
+      id: listenerId,
+      window: options.window,
+      asset: options.asset,
+      listener: options.listener,
+      activeSlug: null,
+      emittedEventIds: new Set<string>(),
+      isSyncing: false,
+      hasPendingSync: false
+    };
+
+    this.snapshotListenersById.set(listenerId, listenerState);
+    this.ensureMarketEventStreamListener();
+    await this.initializeListenerBaseline(listenerState);
+
+    return listenerId;
+  }
+
+  public removeSnapshotListener(listenerId: string): void {
+    this.snapshotListenersById.delete(listenerId);
+    this.cleanupMarketEventStreamListener();
   }
 
   /**
