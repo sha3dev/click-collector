@@ -350,9 +350,13 @@ export class MarketEventsQueryService {
       if (hasMarketChanged) {
         listenerState.activeSlug = activeMarket.slug;
         listenerState.emittedEventIds.clear();
+        const snapshots = await this.getMarketSnapshots(activeMarket.slug);
+        for (const snapshot of snapshots) {
+          listenerState.emittedEventIds.add(snapshot.triggerEvent.eventId);
+        }
+      } else {
+        await this.emitUnseenSnapshots(listenerState, activeMarket.slug);
       }
-
-      await this.emitUnseenSnapshots(listenerState, activeMarket.slug);
     }
   }
 
