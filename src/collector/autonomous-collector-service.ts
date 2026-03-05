@@ -17,6 +17,7 @@ import { CollectorStartupError } from "./collector-errors.ts";
 import { ClickHouseMarketRegistrySink } from "./clickhouse-market-registry-sink.ts";
 import { ClickHouseTickSink } from "./clickhouse-tick-sink.ts";
 import { CryptoTicksIngestionService } from "./crypto-ticks-ingestion-service.ts";
+import { MarketRegistryPriceEnrichmentService } from "./market-registry-price-enrichment-service.ts";
 import { PolymarketTicksIngestionService } from "./polymarket-ticks-ingestion-service.ts";
 
 /**
@@ -37,6 +38,7 @@ type AutonomousCollectorServiceOptions = {
   marketRegistrySink: ClickHouseMarketRegistrySink;
   cryptoIngestionService: CryptoTicksIngestionService;
   polymarketIngestionService: PolymarketTicksIngestionService;
+  marketRegistryPriceEnrichmentService: MarketRegistryPriceEnrichmentService;
 };
 
 export class AutonomousCollectorService {
@@ -63,6 +65,7 @@ export class AutonomousCollectorService {
   private readonly marketRegistrySink: ClickHouseMarketRegistrySink;
   private readonly cryptoIngestionService: CryptoTicksIngestionService;
   private readonly polymarketIngestionService: PolymarketTicksIngestionService;
+  private readonly marketRegistryPriceEnrichmentService: MarketRegistryPriceEnrichmentService;
 
   /**
    * @section public:properties
@@ -82,6 +85,7 @@ export class AutonomousCollectorService {
     this.marketRegistrySink = options.marketRegistrySink;
     this.cryptoIngestionService = options.cryptoIngestionService;
     this.polymarketIngestionService = options.polymarketIngestionService;
+    this.marketRegistryPriceEnrichmentService = options.marketRegistryPriceEnrichmentService;
     this.isRunning = false;
   }
 
@@ -108,6 +112,7 @@ export class AutonomousCollectorService {
     const marketRegistrySink = ClickHouseMarketRegistrySink.create({ repository: marketRegistryRepository });
     const cryptoIngestionService = CryptoTicksIngestionService.create({ tickSink });
     const polymarketIngestionService = PolymarketTicksIngestionService.create({ tickSink, marketRegistrySink });
+    const marketRegistryPriceEnrichmentService = MarketRegistryPriceEnrichmentService.create({ marketRegistryRepository });
     const service = new AutonomousCollectorService({
       clickHouseClient,
       marketRegistryRepository,
@@ -115,7 +120,8 @@ export class AutonomousCollectorService {
       tickSink,
       marketRegistrySink,
       cryptoIngestionService,
-      polymarketIngestionService
+      polymarketIngestionService,
+      marketRegistryPriceEnrichmentService
     });
 
     return service;
@@ -148,6 +154,7 @@ export class AutonomousCollectorService {
         this.tickSink.start();
         await this.cryptoIngestionService.start();
         await this.polymarketIngestionService.start();
+        await this.marketRegistryPriceEnrichmentService.start();
         this.isRunning = true;
         LOGGER.info("autonomous collector started");
       } catch (error) {
@@ -158,6 +165,7 @@ export class AutonomousCollectorService {
 
   public async stop(): Promise<void> {
     if (this.isRunning) {
+      await this.marketRegistryPriceEnrichmentService.stop();
       await this.polymarketIngestionService.stop();
       await this.cryptoIngestionService.stop();
       await this.tickSink.stop();

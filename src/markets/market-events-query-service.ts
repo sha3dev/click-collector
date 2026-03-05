@@ -18,6 +18,7 @@ import type {
   AssetSymbol,
   CryptoSourceName,
   MarketEvent,
+  MarketRecord,
   MarketSnapshot,
   MarketWindow,
   SnapshotAssetState,
@@ -35,7 +36,7 @@ const SOURCE_CATEGORY_ORDER = { chainlink: 0, exchange: 1, polymarket: 2 } as co
  */
 
 type MarketEventsQueryServiceOptions = {
-  marketRegistryRepository: Pick<MarketRegistryRepository, "listMarketSlugs" | "getMarketBoundsBySlug">;
+  marketRegistryRepository: Pick<MarketRegistryRepository, "listMarkets" | "getMarketBoundsBySlug">;
   tickRepository: Pick<TickRepository, "getRelatedEventsByMarketRange" | "getAllAssetsEventsByMarketRange">;
 };
 
@@ -58,7 +59,7 @@ export class MarketEventsQueryService {
    * @section private:properties
    */
 
-  private readonly marketRegistryRepository: Pick<MarketRegistryRepository, "listMarketSlugs" | "getMarketBoundsBySlug">;
+  private readonly marketRegistryRepository: Pick<MarketRegistryRepository, "listMarkets" | "getMarketBoundsBySlug">;
   private readonly tickRepository: Pick<TickRepository, "getRelatedEventsByMarketRange" | "getAllAssetsEventsByMarketRange">;
 
   /**
@@ -262,9 +263,9 @@ export class MarketEventsQueryService {
    * @section public:methods
    */
 
-  public async listMarkets(window: MarketWindow, asset: AssetSymbol): Promise<string[]> {
-    const slugs = await this.marketRegistryRepository.listMarketSlugs(window, asset);
-    return slugs;
+  public async listMarkets(window: MarketWindow, asset: AssetSymbol): Promise<MarketRecord[]> {
+    const markets = await this.marketRegistryRepository.listMarkets(window, asset);
+    return markets;
   }
 
   public async getMarketEvents(slug: string): Promise<MarketEvent[]> {

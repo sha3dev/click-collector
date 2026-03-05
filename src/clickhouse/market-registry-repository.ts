@@ -31,6 +31,10 @@ const MARKET_REGISTRY_TABLE = CONFIG.CLICKHOUSE_MARKET_REGISTRY_TABLE;
  */
 
 type MarketRegistryRepositoryOptions = { client: ClickHouseClientContract };
+type PendingPriceToBeatQueryOptions = { nowTs: number; limit: number };
+type PendingFinalPriceQueryOptions = { nowTs: number; limit: number };
+type PreviousMarketQueryOptions = { asset: AssetSymbol; window: MarketWindow; marketStartTs: number };
+type NextMarketWithPriceToBeatQueryOptions = { asset: AssetSymbol; window: MarketWindow; marketStartTs: number };
 
 export class MarketRegistryRepository {
   /**
@@ -97,6 +101,25 @@ export class MarketRegistryRepository {
     return bounds;
   }
 
+  private static fromRowToMarketRecord(row: MarketRegistrySelectRow): MarketRecord {
+    const marketStartTs = Date.parse(row.market_start_ts.replace(" ", "T").concat("Z"));
+    const marketEndTs = Date.parse(row.market_end_ts.replace(" ", "T").concat("Z"));
+    const record: MarketRecord = {
+      slug: row.slug,
+      asset: row.asset,
+      window: row.window,
+      marketStartTs,
+      marketEndTs,
+      upAssetId: row.up_asset_id,
+      downAssetId: row.down_asset_id,
+      priceToBeat: row.price_to_beat,
+      finalPrice: row.final_price,
+      isTest: row.is_test === 1
+    };
+
+    return record;
+  }
+
   private static toInsertRow(model: MarketRegistryWriteModel): MarketRegistryInsertRow {
     const nowIsoText = MarketRegistryRepository.toDateTime64Text(Date.now());
     const row: MarketRegistryInsertRow = {
@@ -107,6 +130,8 @@ export class MarketRegistryRepository {
       market_end_ts: MarketRegistryRepository.toDateTime64Text(model.marketEndTs),
       up_asset_id: model.upAssetId,
       down_asset_id: model.downAssetId,
+      price_to_beat: model.priceToBeat,
+      final_price: model.finalPrice,
       created_at: nowIsoText,
       updated_at: nowIsoText,
       is_test: model.isTest ? 1 : 0
@@ -157,6 +182,8 @@ export class MarketRegistryRepository {
         market_end_ts DateTime64(3, 'UTC'),
         up_asset_id String,
         down_asset_id String,
+        price_to_beat Nullable(Float64),
+        final_price Nullable(Float64),
         created_at DateTime64(3, 'UTC'),
         updated_at DateTime64(3, 'UTC'),
         is_test UInt8 DEFAULT 0
@@ -168,6 +195,8 @@ export class MarketRegistryRepository {
 
     await this.client.command({ query });
     await this.client.command({ query: `ALTER TABLE ${MARKET_REGISTRY_TABLE} ADD COLUMN IF NOT EXISTS is_test UInt8 DEFAULT 0` });
+    await this.client.command({ query: `ALTER TABLE ${MARKET_REGISTRY_TABLE} ADD COLUMN IF NOT EXISTS price_to_beat Nullable(Float64)` });
+    await this.client.command({ query: `ALTER TABLE ${MARKET_REGISTRY_TABLE} ADD COLUMN IF NOT EXISTS final_price Nullable(Float64)` });
   }
 
   public async upsertMarkets(markets: MarketRecord[]): Promise<void> {
@@ -237,6 +266,154 @@ export class MarketRegistryRepository {
     }
 
     return slugs;
+  }
+
+  public async listMarkets(window: MarketWindow, asset: AssetSymbol): Promise<MarketRecord[]> {
+    const escapedWindow = this.escapeLiteral(window);
+    const escapedAsset = this.escapeLiteral(asset);
+    const query = `
+      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, price_to_beat, final_price, created_at, updated_at, is_test
+      FROM ${MARKET_REGISTRY_TABLE}
+      WHERE window = '${escapedWindow}' AND asset = '${escapedAsset}'
+      ORDER BY market_start_ts DESC
+    `;
+
+    let markets: MarketRecord[] = [];
+
+    try {
+      const resultSet = await this.client.query({ query, format: "JSONEachRow" });
+      const result = await resultSet.json<MarketRegistrySelectRow>();
+      const rows = MarketRegistryRepository.toRows(result);
+      markets = rows.map((row) => {
+        const market = MarketRegistryRepository.fromRowToMarketRecord(row);
+        return market;
+      });
+    } catch (error) {
+      throw ClickHouseQueryError.forOperation("listMarkets", this.stringifyError(error));
+    }
+
+    return markets;
+  }
+
+  public async listPendingPriceToBeatMarkets(options: PendingPriceToBeatQueryOptions): Promise<MarketRecord[]> {
+    const nowIsoText = MarketRegistryRepository.toDateTime64Text(options.nowTs);
+    const query = `
+      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, price_to_beat, final_price, created_at, updated_at, is_test
+      FROM ${MARKET_REGISTRY_TABLE}
+      WHERE price_to_beat IS NULL AND market_start_ts <= toDateTime64('${nowIsoText}', 3, 'UTC')
+      ORDER BY market_start_ts ASC
+      LIMIT ${options.limit}
+    `;
+
+    let markets: MarketRecord[] = [];
+
+    try {
+      const resultSet = await this.client.query({ query, format: "JSONEachRow" });
+      const result = await resultSet.json<MarketRegistrySelectRow>();
+      const rows = MarketRegistryRepository.toRows(result);
+      markets = rows.map((row) => {
+        const market = MarketRegistryRepository.fromRowToMarketRecord(row);
+        return market;
+      });
+    } catch (error) {
+      throw ClickHouseQueryError.forOperation("listPendingPriceToBeatMarkets", this.stringifyError(error));
+    }
+
+    return markets;
+  }
+
+  public async getPreviousMarketForFinalPrice(options: PreviousMarketQueryOptions): Promise<MarketRecord | null> {
+    const escapedWindow = this.escapeLiteral(options.window);
+    const escapedAsset = this.escapeLiteral(options.asset);
+    const startIsoText = MarketRegistryRepository.toDateTime64Text(options.marketStartTs);
+    const query = `
+      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, price_to_beat, final_price, created_at, updated_at, is_test
+      FROM ${MARKET_REGISTRY_TABLE}
+      WHERE
+        window = '${escapedWindow}'
+        AND asset = '${escapedAsset}'
+        AND market_start_ts < toDateTime64('${startIsoText}', 3, 'UTC')
+      ORDER BY market_start_ts DESC, updated_at DESC
+      LIMIT 1
+    `;
+
+    let market: MarketRecord | null = null;
+
+    try {
+      const resultSet = await this.client.query({ query, format: "JSONEachRow" });
+      const result = await resultSet.json<MarketRegistrySelectRow>();
+      const rows = MarketRegistryRepository.toRows(result);
+      const row = rows.at(0);
+
+      if (row) {
+        market = MarketRegistryRepository.fromRowToMarketRecord(row);
+      }
+    } catch (error) {
+      throw ClickHouseQueryError.forOperation("getPreviousMarketForFinalPrice", this.stringifyError(error));
+    }
+
+    return market;
+  }
+
+  public async listPendingFinalPriceMarkets(options: PendingFinalPriceQueryOptions): Promise<MarketRecord[]> {
+    const nowIsoText = MarketRegistryRepository.toDateTime64Text(options.nowTs);
+    const query = `
+      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, price_to_beat, final_price, created_at, updated_at, is_test
+      FROM ${MARKET_REGISTRY_TABLE}
+      WHERE final_price IS NULL AND market_end_ts <= toDateTime64('${nowIsoText}', 3, 'UTC')
+      ORDER BY market_start_ts ASC
+      LIMIT ${options.limit}
+    `;
+
+    let markets: MarketRecord[] = [];
+
+    try {
+      const resultSet = await this.client.query({ query, format: "JSONEachRow" });
+      const result = await resultSet.json<MarketRegistrySelectRow>();
+      const rows = MarketRegistryRepository.toRows(result);
+      markets = rows.map((row) => {
+        const market = MarketRegistryRepository.fromRowToMarketRecord(row);
+        return market;
+      });
+    } catch (error) {
+      throw ClickHouseQueryError.forOperation("listPendingFinalPriceMarkets", this.stringifyError(error));
+    }
+
+    return markets;
+  }
+
+  public async getNextMarketWithPriceToBeat(options: NextMarketWithPriceToBeatQueryOptions): Promise<MarketRecord | null> {
+    const escapedWindow = this.escapeLiteral(options.window);
+    const escapedAsset = this.escapeLiteral(options.asset);
+    const startIsoText = MarketRegistryRepository.toDateTime64Text(options.marketStartTs);
+    const query = `
+      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, price_to_beat, final_price, created_at, updated_at, is_test
+      FROM ${MARKET_REGISTRY_TABLE}
+      WHERE
+        window = '${escapedWindow}'
+        AND asset = '${escapedAsset}'
+        AND market_start_ts > toDateTime64('${startIsoText}', 3, 'UTC')
+        AND price_to_beat IS NOT NULL
+      ORDER BY market_start_ts ASC, updated_at DESC
+      LIMIT 1
+    `;
+
+    let market: MarketRecord | null = null;
+
+    try {
+      const resultSet = await this.client.query({ query, format: "JSONEachRow" });
+      const result = await resultSet.json<MarketRegistrySelectRow>();
+      const rows = MarketRegistryRepository.toRows(result);
+      const row = rows.at(0);
+
+      if (row) {
+        market = MarketRegistryRepository.fromRowToMarketRecord(row);
+      }
+    } catch (error) {
+      throw ClickHouseQueryError.forOperation("getNextMarketWithPriceToBeat", this.stringifyError(error));
+    }
+
+    return market;
   }
 
   /**

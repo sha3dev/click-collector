@@ -53,6 +53,8 @@ export type MarketRecord = {
   marketEndTs: number;
   upAssetId: string;
   downAssetId: string;
+  priceToBeat: number | null;
+  finalPrice: number | null;
   isTest: boolean;
 };
 

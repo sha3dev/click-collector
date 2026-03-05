@@ -28,10 +28,10 @@ npm run start
 import { MarketEventsQueryService } from "@sha3/click-collector";
 
 const query = MarketEventsQueryService.createDefault();
-const slugs = await query.listMarkets("5m", "btc");
+const markets = await query.listMarkets("5m", "btc");
 
-if (slugs.length > 0) {
-  const slug = slugs[0];
+if (markets.length > 0) {
+  const slug = markets[0].slug;
   const events = await query.getMarketEvents(slug);
   const snapshots = await query.getMarketSnapshots(slug);
   console.log({ slug, events: events.length, snapshots: snapshots.length });
@@ -50,7 +50,7 @@ Training pipelines need deterministic time-ordered arrays that merge heterogeneo
 
 ## Core Concepts
 
-- `market_registry` stores market metadata (`slug`, asset, window, market bounds).
+- `market_registry` stores market metadata (`slug`, asset, window, market bounds) and derived prices (`price_to_beat`, `final_price`).
 - `ticks` stores normalized events from all sources.
 - Reads are market-centric (`slug`) and return:
   - raw correlated events (`getMarketEvents`)
@@ -74,7 +74,7 @@ Training pipelines need deterministic time-ordered arrays that merge heterogeneo
 
 ### Methods
 
-- `listMarkets(window, asset): Promise<string[]>`
+- `listMarkets(window, asset): Promise<MarketRecord[]>`
 - `getMarketEvents(slug): Promise<MarketEvent[]>`
 - `getMarketSnapshots(slug): Promise<MarketSnapshot[]>`
 
@@ -82,7 +82,7 @@ Training pipelines need deterministic time-ordered arrays that merge heterogeneo
 
 ### `listMarkets(window, asset)`
 
-Returns known market slugs for the given pair.
+Returns market records from `market_registry` for the given pair.
 
 ### `getMarketEvents(slug)`
 
@@ -120,6 +120,13 @@ Null semantics:
 - `EventType = "price" | "orderbook"`
 - `MarketEvent`
 - `MarketSnapshot`
+- `MarketRecord`
+
+### `MarketRecord` price semantics
+
+- `priceToBeat`: opening price for that market window (fetched from Polymarket crypto price endpoint).
+- `finalPrice`: equals `priceToBeat` of the immediate next market for the same (`asset`, `window`).
+- enrichment is asynchronous and retried every `PRICE_TO_BEAT_POLL_INTERVAL_MS` when the endpoint still does not expose `openPrice`.
 
 ### `MarketEvent` shape
 
@@ -178,9 +185,10 @@ npm install @sha3/click-collector
 import { MarketEventsQueryService, type MarketSnapshot } from "@sha3/click-collector";
 
 const query = MarketEventsQueryService.createDefault();
-const slugs = await query.listMarkets("15m", "eth");
+const markets = await query.listMarkets("15m", "eth");
 
-for (const slug of slugs) {
+for (const market of markets) {
+  const slug = market.slug;
   const snapshots: MarketSnapshot[] = await query.getMarketSnapshots(slug);
   if (snapshots.length > 0) {
     const last = snapshots[snapshots.length - 1];
@@ -238,6 +246,14 @@ import CONFIG from "../config.ts";
 - `SUPPORTED_WINDOWS`: supported windows (`5m|15m`)
 - `CRYPTO_PROVIDERS`: enabled crypto providers
 
+### Price-to-beat enrichment
+
+- `PRICE_TO_BEAT_POLL_INTERVAL_MS`: retry interval for `price_to_beat` lookup on started markets (default `10000`)
+- `PRICE_TO_BEAT_STARTUP_BACKFILL_ENABLED`: run a one-shot massive backfill at startup (`1` enabled, `0` disabled)
+- `PRICE_TO_BEAT_STARTUP_BACKFILL_LIMIT`: maximum number of pending markets scanned at startup
+- `PRICE_TO_BEAT_STARTUP_BACKFILL_DELAY_MS`: delay between startup backfill endpoint requests (default `2000`)
+- `PRICE_TO_BEAT_API_BASE_URL`: endpoint used to fetch window opening prices
+
 ### Example `.env`
 
 ```dotenv
@@ -257,6 +273,11 @@ INGEST_COALESCE_KEY_TTL_MS=3600000
 ORDERBOOK_MAX_LEVELS=5
 TICKS_TTL_DAYS=90
 POLYMARKET_DISCOVERY_INTERVAL_MS=30000
+PRICE_TO_BEAT_POLL_INTERVAL_MS=10000
+PRICE_TO_BEAT_STARTUP_BACKFILL_ENABLED=1
+PRICE_TO_BEAT_STARTUP_BACKFILL_LIMIT=500
+PRICE_TO_BEAT_STARTUP_BACKFILL_DELAY_MS=2000
+PRICE_TO_BEAT_API_BASE_URL=https://polymarket.com/api/crypto/crypto-price
 ```
 
 ## Data Model (ClickHouse)
@@ -274,6 +295,8 @@ Important columns:
 - `market_end_ts`
 - `up_asset_id`
 - `down_asset_id`
+- `price_to_beat` (`Nullable(Float64)`)
+- `final_price` (`Nullable(Float64)`)
 - `is_test`
 
 Engine:
@@ -306,6 +329,17 @@ Engine:
 - `PARTITION BY (asset, toYYYYMM(event_ts))`
 - `TTL event_ts + INTERVAL 90 DAY` (default)
 - `ORDER BY (asset, event_ts, source_category, source_name, event_type, event_id)`
+
+## Price Enrichment Lifecycle
+
+1. Polymarket discovery inserts/updates `market_registry` rows with `price_to_beat = NULL` and `final_price = NULL`.
+2. `MarketRegistryPriceEnrichmentService` scans started markets missing `price_to_beat`.
+3. For each pending market, it calls:
+   `GET {PRICE_TO_BEAT_API_BASE_URL}?symbol=BTC&eventStartTime=...&variant=fiveminute|fifteen&endDate=...`
+4. If `openPrice` exists:
+   - current row gets `price_to_beat = openPrice`
+   - previous row (same `asset` + `window`) gets `final_price = openPrice`
+5. If `openPrice` is not yet available, the market stays pending and is retried on the next poll cycle.
 
 ## Operational Safety (Important)
 

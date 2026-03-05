@@ -133,6 +133,8 @@ export class PolymarketTicksIngestionService {
         marketEndTs: market.end.getTime(),
         upAssetId: market.upTokenId,
         downAssetId: market.downTokenId,
+        priceToBeat: null,
+        finalPrice: null,
         isTest: false
       };
     }

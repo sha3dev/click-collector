@@ -110,6 +110,8 @@ test("polymarket ingestion persists market registry and maps stream events", asy
   assert.equal(persistedMarkets.length >= 1, true);
   assert.ok(firstPersisted);
   assert.equal(firstPersisted.slug, "btc-updown-5m-1767225900");
+  assert.equal(firstPersisted.priceToBeat, null);
+  assert.equal(firstPersisted.finalPrice, null);
   assert.equal(subscribedAssetIds.length >= 1, true);
   assert.ok(firstSubscribed);
   assert.deepEqual(firstSubscribed.sort(), ["down-1", "up-1"]);

@@ -43,6 +43,8 @@ export type MarketRegistryInsertRow = {
   market_end_ts: string;
   up_asset_id: string;
   down_asset_id: string;
+  price_to_beat: number | null;
+  final_price: number | null;
   created_at: string;
   updated_at: string;
   is_test: number;

@@ -23,15 +23,15 @@ test("clickhouse readonly query returns market snapshots aligned with events", a
   const marketRegistryRepository = MarketRegistryRepository.create({ client });
   const tickRepository = TickRepository.create({ client });
   const queryService = MarketEventsQueryService.create({ marketRegistryRepository, tickRepository });
-  const listedSlugs = await queryService.listMarkets(READONLY_WINDOW, READONLY_ASSET);
-  const hasAnySlug = listedSlugs.length > 0;
+  const listedMarkets = await queryService.listMarkets(READONLY_WINDOW, READONLY_ASSET);
+  const hasAnyMarket = listedMarkets.length > 0;
 
-  if (!hasAnySlug) {
+  if (!hasAnyMarket) {
     t.skip("readonly integration skipped because no market slug is available for btc/5m");
   }
 
-  if (hasAnySlug) {
-    const targetSlug = listedSlugs[0] ?? "";
+  if (hasAnyMarket) {
+    const targetSlug = listedMarkets[0]?.slug ?? "";
     const events = await queryService.getMarketEvents(targetSlug);
     const snapshots = await queryService.getMarketSnapshots(targetSlug);
     const hasSnapshots = snapshots.length > 0;

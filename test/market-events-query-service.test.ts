@@ -3,13 +3,38 @@ import { test } from "node:test";
 
 import { MarketEventsQueryService } from "../src/markets/market-events-query-service.ts";
 import { MarketNotFoundError } from "../src/markets/market-not-found-error.ts";
-import type { MarketEvent, MarketSnapshot } from "../src/markets/market-events-types.ts";
+import type { MarketEvent, MarketRecord, MarketSnapshot } from "../src/markets/market-events-types.ts";
 
-test("listMarkets returns slugs from registry repository", async () => {
+test("listMarkets returns market records from registry repository", async () => {
+  const marketOne: MarketRecord = {
+    slug: "btc-updown-5m-1",
+    asset: "btc",
+    window: "5m",
+    marketStartTs: 1_000,
+    marketEndTs: 1_300,
+    upAssetId: "up-1",
+    downAssetId: "down-1",
+    priceToBeat: 90_000,
+    finalPrice: 90_010,
+    isTest: false
+  };
+  const marketTwo: MarketRecord = {
+    slug: "btc-updown-5m-2",
+    asset: "btc",
+    window: "5m",
+    marketStartTs: 1_300,
+    marketEndTs: 1_600,
+    upAssetId: "up-2",
+    downAssetId: "down-2",
+    priceToBeat: 90_010,
+    finalPrice: null,
+    isTest: false
+  };
+
   const service = MarketEventsQueryService.create({
     marketRegistryRepository: {
-      async listMarketSlugs() {
-        return ["btc-updown-5m-1", "btc-updown-5m-2"];
+      async listMarkets() {
+        return [marketOne, marketTwo];
       },
       async getMarketBoundsBySlug() {
         return null;
@@ -25,8 +50,8 @@ test("listMarkets returns slugs from registry repository", async () => {
     }
   });
 
-  const slugs = await service.listMarkets("5m", "btc");
-  assert.deepEqual(slugs, ["btc-updown-5m-1", "btc-updown-5m-2"]);
+  const markets = await service.listMarkets("5m", "btc");
+  assert.deepEqual(markets, [marketOne, marketTwo]);
 });
 
 test("getMarketEvents composes related events query using market bounds", async () => {
@@ -52,7 +77,7 @@ test("getMarketEvents composes related events query using market bounds", async 
 
   const service = MarketEventsQueryService.create({
     marketRegistryRepository: {
-      async listMarketSlugs() {
+      async listMarkets() {
         return [];
       },
       async getMarketBoundsBySlug(slug) {
@@ -85,7 +110,7 @@ test("getMarketEvents composes related events query using market bounds", async 
 test("getMarketEvents throws MarketNotFoundError when slug is unknown", async () => {
   const service = MarketEventsQueryService.create({
     marketRegistryRepository: {
-      async listMarketSlugs() {
+      async listMarkets() {
         return [];
       },
       async getMarketBoundsBySlug() {
@@ -186,7 +211,7 @@ test("getMarketSnapshots composes snapshots with carry-forward state and all-ass
 
   const service = MarketEventsQueryService.create({
     marketRegistryRepository: {
-      async listMarketSlugs() {
+      async listMarkets() {
         return [];
       },
       async getMarketBoundsBySlug(slug) {
@@ -234,7 +259,7 @@ test("getMarketSnapshots composes snapshots with carry-forward state and all-ass
 test("getMarketSnapshots throws MarketNotFoundError when slug is unknown", async () => {
   const service = MarketEventsQueryService.create({
     marketRegistryRepository: {
-      async listMarketSlugs() {
+      async listMarkets() {
         return [];
       },
       async getMarketBoundsBySlug() {

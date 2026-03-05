@@ -1,7 +1,7 @@
 {
   "name": "@sha3/click-collector",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "scripts": {
     "start": "node --import tsx src/index.ts",

@@ -2,7 +2,7 @@ import LOGGER from "./logger.ts";
 import { AutonomousCollectorService } from "./collector/autonomous-collector-service.ts";
 
 export { MarketEventsQueryService } from "./markets/market-events-query-service.ts";
-export type { AssetSymbol, EventType, MarketEvent, MarketSnapshot, MarketWindow } from "./markets/market-events-types.ts";
+export type { AssetSymbol, EventType, MarketEvent, MarketRecord, MarketSnapshot, MarketWindow } from "./markets/market-events-types.ts";
 
 let collectorService: AutonomousCollectorService | null = null;
 
