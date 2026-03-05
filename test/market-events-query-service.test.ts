@@ -81,7 +81,7 @@ test("getMarketEvents composes related events query using market bounds", async 
         return [];
       },
       async getMarketBoundsBySlug(slug) {
-        return { slug, asset: "btc", window: "5m", marketStartTs: 1000, marketEndTs: 2000 };
+        return { slug, asset: "btc", window: "5m", marketStartTs: 1000, marketEndTs: 2000, priceToBeat: 90_000 };
       }
     },
     tickRepository: {
@@ -215,7 +215,7 @@ test("getMarketSnapshots composes snapshots with carry-forward state and all-ass
         return [];
       },
       async getMarketBoundsBySlug(slug) {
-        return { slug, asset: "btc", window: "5m", marketStartTs: 1_000, marketEndTs: 2_000 };
+        return { slug, asset: "btc", window: "5m", marketStartTs: 1_000, marketEndTs: 2_000, priceToBeat: 91_111 };
       }
     },
     tickRepository: {
@@ -241,15 +241,30 @@ test("getMarketSnapshots composes snapshots with carry-forward state and all-ass
   if (firstSnapshot && secondSnapshot && thirdSnapshot) {
     assert.deepEqual(firstSnapshot.triggerEvent, triggerOne);
     assert.equal(firstSnapshot.snapshotTs, 1_000);
+    assert.equal(firstSnapshot.asset, "btc");
+    assert.equal(firstSnapshot.window, "5m");
+    assert.equal(firstSnapshot.marketStartTs, 1_000);
+    assert.equal(firstSnapshot.marketEndTs, 2_000);
+    assert.equal(firstSnapshot.priceToBeat, 91_111);
     assert.deepEqual(firstSnapshot.crypto.btc.binance.price, triggerOne);
     assert.equal(firstSnapshot.crypto.eth.coinbase.price, null);
     assert.equal(firstSnapshot.polymarket.up.price, null);
     assert.deepEqual(secondSnapshot.triggerEvent, triggerTwo);
+    assert.equal(secondSnapshot.asset, "btc");
+    assert.equal(secondSnapshot.window, "5m");
+    assert.equal(secondSnapshot.marketStartTs, 1_000);
+    assert.equal(secondSnapshot.marketEndTs, 2_000);
+    assert.equal(secondSnapshot.priceToBeat, 91_111);
     assert.deepEqual(secondSnapshot.crypto.btc.binance.price, triggerOne);
     assert.deepEqual(secondSnapshot.crypto.eth.coinbase.price, allAssetEvent);
     assert.deepEqual(secondSnapshot.polymarket.up.price, triggerTwo);
     assert.equal(secondSnapshot.polymarket.down.orderbook, null);
     assert.deepEqual(thirdSnapshot.triggerEvent, triggerThree);
+    assert.equal(thirdSnapshot.asset, "btc");
+    assert.equal(thirdSnapshot.window, "5m");
+    assert.equal(thirdSnapshot.marketStartTs, 1_000);
+    assert.equal(thirdSnapshot.marketEndTs, 2_000);
+    assert.equal(thirdSnapshot.priceToBeat, 91_111);
     assert.deepEqual(thirdSnapshot.crypto.btc.chainlink.price, triggerThree);
     assert.deepEqual(thirdSnapshot.polymarket.down.orderbook, polymarketDownBook);
     assert.equal(thirdSnapshot.crypto.sol.kraken.price, null);

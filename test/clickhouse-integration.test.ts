@@ -49,6 +49,11 @@ test("clickhouse readonly query returns market snapshots aligned with events", a
 
         assert.equal(firstSnapshot.triggerEvent.eventId, firstEvent.eventId);
         assert.equal(firstSnapshot.snapshotTs, firstSnapshot.triggerEvent.eventTs);
+        assert.equal(firstSnapshot.asset, "btc");
+        assert.equal(firstSnapshot.window, READONLY_WINDOW);
+        assert.equal(typeof firstSnapshot.marketStartTs, "number");
+        assert.equal(typeof firstSnapshot.marketEndTs, "number");
+        assert.equal(typeof firstSnapshot.priceToBeat === "number" || firstSnapshot.priceToBeat === null, true);
         assert.equal(Object.hasOwn(firstSnapshot.crypto, "btc"), true);
         assert.equal(Object.hasOwn(firstSnapshot.crypto, "eth"), true);
         assert.equal(Object.hasOwn(firstSnapshot.crypto, "sol"), true);

@@ -53,7 +53,7 @@ export type MarketRegistryInsertRow = {
 export type TickSelectRow = TickInsertRow;
 export type MarketRegistrySelectRow = MarketRegistryInsertRow;
 
-export type MarketBounds = { slug: string; asset: AssetSymbol; window: MarketWindow; marketStartTs: number; marketEndTs: number };
+export type MarketBounds = { slug: string; asset: AssetSymbol; window: MarketWindow; marketStartTs: number; marketEndTs: number; priceToBeat: number | null };
 
 export type ClickHouseQueryResult<T> = { data?: T[] } | T[];
 

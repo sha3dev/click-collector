@@ -211,13 +211,31 @@ export class MarketEventsQueryService {
     }
   }
 
-  private static buildSnapshot(triggerEvent: MarketEvent, state: MarketSnapshotState): MarketSnapshot {
+  private static buildSnapshot(
+    triggerEvent: MarketEvent,
+    state: MarketSnapshotState,
+    market: { asset: AssetSymbol; window: MarketWindow; marketStartTs: number; marketEndTs: number; priceToBeat: number | null }
+  ): MarketSnapshot {
     const snapshotState = MarketEventsQueryService.cloneSnapshotState(state);
-    const snapshot: MarketSnapshot = { triggerEvent, snapshotTs: triggerEvent.eventTs, crypto: snapshotState.crypto, polymarket: snapshotState.polymarket };
+    const snapshot: MarketSnapshot = {
+      triggerEvent,
+      snapshotTs: triggerEvent.eventTs,
+      asset: market.asset,
+      window: market.window,
+      marketStartTs: market.marketStartTs,
+      marketEndTs: market.marketEndTs,
+      priceToBeat: market.priceToBeat,
+      crypto: snapshotState.crypto,
+      polymarket: snapshotState.polymarket
+    };
     return snapshot;
   }
 
-  private static buildMarketSnapshots(triggerEvents: MarketEvent[], allEvents: MarketEvent[]): MarketSnapshot[] {
+  private static buildMarketSnapshots(
+    triggerEvents: MarketEvent[],
+    allEvents: MarketEvent[],
+    market: { asset: AssetSymbol; window: MarketWindow; marketStartTs: number; marketEndTs: number; priceToBeat: number | null }
+  ): MarketSnapshot[] {
     const snapshots: MarketSnapshot[] = [];
     const state = MarketEventsQueryService.createEmptySnapshotState();
     let allEventsIndex = 0;
@@ -246,7 +264,7 @@ export class MarketEventsQueryService {
         }
       }
 
-      const snapshot = MarketEventsQueryService.buildSnapshot(triggerEvent, state);
+      const snapshot = MarketEventsQueryService.buildSnapshot(triggerEvent, state, market);
       snapshots.push(snapshot);
     }
 
@@ -302,7 +320,13 @@ export class MarketEventsQueryService {
         fromTs: marketBounds.marketStartTs,
         toTs: marketBounds.marketEndTs
       });
-      snapshots = MarketEventsQueryService.buildMarketSnapshots(triggerEvents, allEvents);
+      snapshots = MarketEventsQueryService.buildMarketSnapshots(triggerEvents, allEvents, {
+        asset: marketBounds.asset,
+        window: marketBounds.window,
+        marketStartTs: marketBounds.marketStartTs,
+        marketEndTs: marketBounds.marketEndTs,
+        priceToBeat: marketBounds.priceToBeat
+      });
     } else {
       throw MarketNotFoundError.forSlug(slug);
     }

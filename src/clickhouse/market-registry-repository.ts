@@ -96,7 +96,7 @@ export class MarketRegistryRepository {
   private static fromRowToBounds(row: MarketRegistrySelectRow): MarketBounds {
     const marketStartTs = Date.parse(row.market_start_ts.replace(" ", "T").concat("Z"));
     const marketEndTs = Date.parse(row.market_end_ts.replace(" ", "T").concat("Z"));
-    const bounds: MarketBounds = { slug: row.slug, asset: row.asset, window: row.window, marketStartTs, marketEndTs };
+    const bounds: MarketBounds = { slug: row.slug, asset: row.asset, window: row.window, marketStartTs, marketEndTs, priceToBeat: row.price_to_beat };
 
     return bounds;
   }
@@ -217,7 +217,7 @@ export class MarketRegistryRepository {
   public async getMarketBoundsBySlug(slug: string): Promise<MarketBounds | null> {
     const escapedSlug = this.escapeLiteral(slug);
     const query = `
-      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, created_at, updated_at, is_test
+      SELECT slug, asset, window, market_start_ts, market_end_ts, up_asset_id, down_asset_id, price_to_beat, final_price, created_at, updated_at, is_test
       FROM ${MARKET_REGISTRY_TABLE}
       WHERE slug = '${escapedSlug}'
       ORDER BY updated_at DESC

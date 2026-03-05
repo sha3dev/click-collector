@@ -106,6 +106,11 @@ Each result is a `MarketSnapshot`:
 
 - `triggerEvent`: event that defines this state point
 - `snapshotTs`: equals `triggerEvent.eventTs`
+- `asset`: market asset (`btc|eth|sol|xrp`)
+- `window`: market window (`5m|15m`)
+- `marketStartTs`: market window start timestamp (ms)
+- `marketEndTs`: market window end timestamp (ms)
+- `priceToBeat`: opening price of the market window (`market_registry.price_to_beat`)
 - `crypto`: latest known values for all assets (`btc|eth|sol|xrp`) and providers (`binance|coinbase|kraken|okx|chainlink`)
 - `polymarket`: latest known values for both sides (`up`, `down`) of the requested market
 
@@ -154,6 +159,11 @@ type MarketEvent = {
 type MarketSnapshot = {
   triggerEvent: MarketEvent;
   snapshotTs: number;
+  asset: AssetSymbol;
+  window: MarketWindow;
+  marketStartTs: number;
+  marketEndTs: number;
+  priceToBeat: number | null;
   crypto: { btc: SnapshotAssetState; eth: SnapshotAssetState; sol: SnapshotAssetState; xrp: SnapshotAssetState };
   polymarket: { up: SnapshotEventState; down: SnapshotEventState };
 };
