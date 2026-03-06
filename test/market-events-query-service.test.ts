@@ -389,3 +389,137 @@ test("addSnapshotListener emits only new snapshots after listener registration",
   assert.equal(receivedSnapshots[0]?.triggerEvent.eventId, "live-2");
   service.removeSnapshotListener(listenerId);
 });
+
+test("addSnapshotListener emits snapshots when active market changes", async () => {
+  const baselineEvent: MarketEvent = {
+    eventId: "market-one-base",
+    eventTs: 1_000,
+    sourceCategory: "exchange",
+    sourceName: "binance",
+    eventType: "price",
+    asset: "btc",
+    window: null,
+    marketSlug: null,
+    tokenSide: null,
+    price: 100,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  const marketTwoEventOne: MarketEvent = {
+    eventId: "market-two-1",
+    eventTs: 2_000,
+    sourceCategory: "exchange",
+    sourceName: "binance",
+    eventType: "price",
+    asset: "btc",
+    window: null,
+    marketSlug: null,
+    tokenSide: null,
+    price: 101,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  const marketTwoEventTwo: MarketEvent = {
+    eventId: "market-two-2",
+    eventTs: 2_100,
+    sourceCategory: "exchange",
+    sourceName: "coinbase",
+    eventType: "price",
+    asset: "btc",
+    window: null,
+    marketSlug: null,
+    tokenSide: null,
+    price: 102,
+    orderbook: null,
+    payloadJson: "{}",
+    isTest: false
+  };
+  const nowTs = Date.now();
+  const marketOne: MarketRecord = {
+    slug: "btc-updown-5m-one",
+    asset: "btc",
+    window: "5m",
+    marketStartTs: nowTs - 10_000,
+    marketEndTs: nowTs + 10_000,
+    upAssetId: "up-1",
+    downAssetId: "down-1",
+    priceToBeat: 99,
+    finalPrice: null,
+    isTest: false
+  };
+  const marketTwo: MarketRecord = {
+    slug: "btc-updown-5m-two",
+    asset: "btc",
+    window: "5m",
+    marketStartTs: nowTs - 10_000,
+    marketEndTs: nowTs + 10_000,
+    upAssetId: "up-2",
+    downAssetId: "down-2",
+    priceToBeat: 100,
+    finalPrice: null,
+    isTest: false
+  };
+  const eventsBySlug: Record<string, MarketEvent[]> = { "btc-updown-5m-one": [baselineEvent], "btc-updown-5m-two": [marketTwoEventOne, marketTwoEventTwo] };
+  let activeMarkets: MarketRecord[] = [marketOne];
+  const receivedSnapshots: MarketSnapshot[] = [];
+  const service = MarketEventsQueryService.create({
+    marketRegistryRepository: {
+      async listMarkets() {
+        return activeMarkets;
+      },
+      async getMarketBoundsBySlug(slug) {
+        if (slug === marketOne.slug) {
+          return {
+            slug: marketOne.slug,
+            asset: marketOne.asset,
+            window: marketOne.window,
+            marketStartTs: marketOne.marketStartTs,
+            marketEndTs: marketOne.marketEndTs,
+            priceToBeat: marketOne.priceToBeat,
+            finalPrice: marketOne.finalPrice
+          };
+        }
+        return {
+          slug: marketTwo.slug,
+          asset: marketTwo.asset,
+          window: marketTwo.window,
+          marketStartTs: marketTwo.marketStartTs,
+          marketEndTs: marketTwo.marketEndTs,
+          priceToBeat: marketTwo.priceToBeat,
+          finalPrice: marketTwo.finalPrice
+        };
+      }
+    },
+    tickRepository: {
+      async getRelatedEventsByMarketRange(options) {
+        const events = eventsBySlug[options.slug] ?? [];
+        return events;
+      },
+      async getAllAssetsEventsByMarketRange(options) {
+        const events = eventsBySlug[options.slug] ?? [];
+        return events;
+      }
+    }
+  });
+  const listenerId = await service.addSnapshotListener({
+    window: "5m",
+    asset: "btc",
+    listener: (snapshot) => {
+      receivedSnapshots.push(snapshot);
+    }
+  });
+
+  assert.equal(receivedSnapshots.length, 0);
+  activeMarkets = [marketTwo];
+  MarketEventStream.publish(marketTwoEventOne);
+  await sleep(20);
+  assert.deepEqual(
+    receivedSnapshots.map((snapshot) => {
+      return snapshot.triggerEvent.eventId;
+    }),
+    ["market-two-1", "market-two-2"]
+  );
+  service.removeSnapshotListener(listenerId);
+});
