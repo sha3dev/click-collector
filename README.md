@@ -104,6 +104,12 @@ Sorted by:
 
 Returns aggregated state over time with **same cardinality and order** as `getMarketEvents(slug)`.
 
+Ordering is strictly chronological ascending:
+
+- `snapshots[0]` is the **oldest** snapshot in the market window.
+- `snapshots[snapshots.length - 1]` is the **newest** snapshot in the market window.
+- This method does **not** return newest-first.
+
 Each result is a `MarketSnapshot`:
 
 - `triggerEvent`: event that defines this state point
