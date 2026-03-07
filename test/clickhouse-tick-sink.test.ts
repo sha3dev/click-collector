@@ -5,7 +5,7 @@ import { ClickHouseTickSink } from "../src/collector/clickhouse-tick-sink.ts";
 import type { TickRepository } from "../src/clickhouse/tick-repository.ts";
 import type { MarketEvent } from "../src/markets/market-events-types.ts";
 
-test("tick sink coalesces events by type and source within configured window", async () => {
+test("tick sink keeps the latest event in each coalesce bucket", async () => {
   const insertedBatches: MarketEvent[][] = [];
   const repository = {
     async insertTicks(events: MarketEvent[]) {
@@ -87,5 +87,5 @@ test("tick sink coalesces events by type and source within configured window", a
     return event.eventId;
   });
 
-  assert.deepEqual(insertedIds, ["e-1", "e-3", "e-4"]);
+  assert.deepEqual(insertedIds, ["e-2", "e-4", "e-3"]);
 });

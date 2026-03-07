@@ -268,7 +268,12 @@ ${ttlClause}
       SELECT event_id, event_ts, ingested_at, source_category, source_name, event_type, asset, window, market_slug, token_side, payload_json, is_test
       FROM ${TICKS_TABLE}
       WHERE
-        (source_category = 'polymarket' AND market_slug = '${escapedSlug}')
+        (
+          source_category = 'polymarket'
+          AND market_slug = '${escapedSlug}'
+          AND event_ts >= toDateTime64('${fromIsoText}', 3, 'UTC')
+          AND event_ts <= toDateTime64('${toIsoText}', 3, 'UTC')
+        )
         OR
         (source_category IN ('exchange', 'chainlink') AND asset = '${escapedAsset}' AND event_ts >= toDateTime64('${fromIsoText}', 3, 'UTC') AND event_ts <= toDateTime64('${toIsoText}', 3, 'UTC'))
       ORDER BY event_ts ASC, source_category ASC, source_name ASC, event_id ASC
@@ -299,7 +304,12 @@ ${ttlClause}
       SELECT event_id, event_ts, ingested_at, source_category, source_name, event_type, asset, window, market_slug, token_side, payload_json, is_test
       FROM ${TICKS_TABLE}
       WHERE
-        (source_category = 'polymarket' AND market_slug = '${escapedSlug}')
+        (
+          source_category = 'polymarket'
+          AND market_slug = '${escapedSlug}'
+          AND event_ts >= toDateTime64('${fromIsoText}', 3, 'UTC')
+          AND event_ts <= toDateTime64('${toIsoText}', 3, 'UTC')
+        )
         OR
         (source_category IN ('exchange', 'chainlink') AND event_ts >= toDateTime64('${fromIsoText}', 3, 'UTC') AND event_ts <= toDateTime64('${toIsoText}', 3, 'UTC'))
       ORDER BY event_ts ASC, source_category ASC, source_name ASC, event_id ASC

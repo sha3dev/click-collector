@@ -23,7 +23,7 @@ import type { TickRepository } from "../clickhouse/tick-repository.ts";
  * @section types
  */
 
-type CoalesceState = { lastEventTs: number; lastSeenAtMs: number };
+type CoalesceState = { bucketId: number; pendingEvent: MarketEvent; lastSeenAtMs: number };
 type ClickHouseTickSinkOptions = {
   repository: TickRepository;
   coalesceWindowMs?: number;
@@ -104,6 +104,11 @@ export class ClickHouseTickSink {
     return decision;
   }
 
+  private static toBucketId(eventTs: number, bucketWidthMs: number): number {
+    const bucketId = Math.floor(eventTs / bucketWidthMs);
+    return bucketId;
+  }
+
   private static toCoalesceKey(event: MarketEvent): string {
     const marketSlug = event.marketSlug ?? "";
     const tokenSide = event.tokenSide ?? "";
@@ -112,21 +117,51 @@ export class ClickHouseTickSink {
     return key;
   }
 
-  private shouldKeepEvent(event: MarketEvent): boolean {
-    const key = ClickHouseTickSink.toCoalesceKey(event);
-    const state = this.coalesceStateByKey.get(key);
-    const previousTs = state?.lastEventTs;
-    const eventAgeMs = previousTs === undefined ? Number.POSITIVE_INFINITY : event.eventTs - previousTs;
-    const shouldKeep = this.coalesceWindowMs <= 0 || eventAgeMs >= this.coalesceWindowMs;
-    const now = this.nowFactory();
+  private bufferEvent(event: MarketEvent): void {
+    this.buffer.push(event);
+    MarketEventStream.publish(event);
+  }
 
-    if (shouldKeep) {
-      this.coalesceStateByKey.set(key, { lastEventTs: event.eventTs, lastSeenAtMs: now });
-    } else if (state) {
-      this.coalesceStateByKey.set(key, { lastEventTs: state.lastEventTs, lastSeenAtMs: now });
+  private flushCompletedCoalescedEvents(includeCurrentBuckets: boolean): void {
+    const readyEvents: MarketEvent[] = [];
+    const currentBucketId = ClickHouseTickSink.toBucketId(this.nowFactory(), this.coalesceWindowMs);
+
+    for (const [key, state] of this.coalesceStateByKey.entries()) {
+      const shouldFlushState = includeCurrentBuckets || state.bucketId < currentBucketId;
+
+      if (shouldFlushState) {
+        readyEvents.push(state.pendingEvent);
+        this.coalesceStateByKey.delete(key);
+      }
     }
 
-    return shouldKeep;
+    readyEvents.sort((left, right) => {
+      return left.eventTs - right.eventTs;
+    });
+
+    for (const event of readyEvents) {
+      this.bufferEvent(event);
+    }
+  }
+
+  private addWithoutCoalescing(event: MarketEvent): void {
+    this.bufferEvent(event);
+  }
+
+  private processCoalescedEvent(event: MarketEvent): void {
+    const key = ClickHouseTickSink.toCoalesceKey(event);
+    const state = this.coalesceStateByKey.get(key);
+    const bucketId = ClickHouseTickSink.toBucketId(event.eventTs, this.coalesceWindowMs);
+    const now = this.nowFactory();
+
+    if (state === undefined) {
+      this.coalesceStateByKey.set(key, { bucketId, pendingEvent: event, lastSeenAtMs: now });
+    } else if (bucketId === state.bucketId) {
+      this.coalesceStateByKey.set(key, { bucketId, pendingEvent: event, lastSeenAtMs: now });
+    } else if (bucketId > state.bucketId) {
+      this.bufferEvent(state.pendingEvent);
+      this.coalesceStateByKey.set(key, { bucketId, pendingEvent: event, lastSeenAtMs: now });
+    }
   }
 
   private cleanupCoalesceState(): void {
@@ -175,16 +210,20 @@ export class ClickHouseTickSink {
       this.cleanupTimer = null;
     }
 
+    this.flushCompletedCoalescedEvents(true);
     await this.flush();
   }
 
   public async writeTicks(events: MarketEvent[]): Promise<void> {
-    for (const event of events) {
-      const shouldKeepEvent = this.shouldKeepEvent(event);
+    if (this.coalesceWindowMs > 0) {
+      this.flushCompletedCoalescedEvents(false);
+    }
 
-      if (shouldKeepEvent) {
-        this.buffer.push(event);
-        MarketEventStream.publish(event);
+    for (const event of events) {
+      if (this.coalesceWindowMs > 0) {
+        this.processCoalescedEvent(event);
+      } else {
+        this.addWithoutCoalescing(event);
       }
     }
 
@@ -194,6 +233,10 @@ export class ClickHouseTickSink {
   }
 
   public async flush(): Promise<void> {
+    if (this.coalesceWindowMs > 0) {
+      this.flushCompletedCoalescedEvents(false);
+    }
+
     const batch = this.takeBatch();
 
     if (batch.length > 0) {
